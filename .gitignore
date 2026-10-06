@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.rozenite/
+.turbo/
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+
+# Example app (Expo / Metro) — see also example/.gitignore
+example/.expo/
+example/dist/
+example/ios/
+example/android/
+example/web-build/
+example/.plugin/
+.metro-health-check*
+
+# Packed tarballs
+*.tgz
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editors & OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db

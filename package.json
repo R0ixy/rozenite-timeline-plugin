@@ -2,28 +2,73 @@
   "name": "rozenite-timeline-plugin",
   "version": "0.0.1",
   "description": "A Rozenite plugin that adds a filterable, channel-based event timeline to React Native DevTools.",
+  "keywords": [
+    "rozenite",
+    "rozenite-plugin",
+    "react-native",
+    "devtools",
+    "timeline",
+    "analytics",
+    "logging"
+  ],
   "license": "MIT",
   "type": "module",
+  "packageManager": "bun@1.3.10",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src",
+    "!src/**/__tests__",
+    "sdk.ts",
+    "README.md"
+  ],
   "scripts": {
     "build": "rozenite build",
-    "dev": "rozenite dev"
+    "dev": "rozenite dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run",
+    "verify:prod": "cd example && bun run export:prod && bun run export:dev && node ../scripts/verify-production-bundle.mjs dist/prod dist/dev"
   },
   "dependencies": {
-    "@rozenite/plugin-bridge": "^1.2.0"
+    "@rozenite/agent-bridge": "^2.4.0",
+    "@rozenite/agent-shared": "^2.4.0",
+    "@rozenite/plugin-bridge": "^2.4.0"
   },
   "devDependencies": {
-    "@rozenite/vite-plugin": "^1.2.0",
+    "@rozenite/testing": "^2.4.0",
+    "@rozenite/ui": "^2.4.0",
+    "@rozenite/vite-plugin": "^2.4.0",
+    "@testing-library/react": "^16.3.0",
     "@types/react": "~19.1.10",
+    "jsdom": "^26.1.0",
+    "lucide-react": "^1.52.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-web": "^0.21.2",
-    "rozenite": "^1.2.0",
+    "rozenite": "^2.4.0",
     "typescript": "~5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "react": "*",
     "react-native": "*"
+  },
+  "main": "./dist/react-native/cjs/react-native.js",
+  "module": "./dist/react-native/react-native.js",
+  "types": "./dist/react-native/react-native.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/react-native/react-native.d.ts",
+      "import": "./dist/react-native/react-native.js",
+      "require": "./dist/react-native/cjs/react-native.js"
+    },
+    "./package.json": "./package.json",
+    "./sdk": {
+      "development": "./sdk.ts",
+      "types": "./dist/sdk/sdk.d.ts",
+      "default": "./dist/sdk/sdk.js"
+    }
   }
 }

@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Timeline playground",
+    "slug": "rozenite-timeline-example",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light"
+  }
+}

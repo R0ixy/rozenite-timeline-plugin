@@ -1,0 +1,26 @@
+{
+  "name": "rozenite-timeline-plugin-example",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~57.0.26",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "rozenite-timeline-plugin": "file:./.plugin/rozenite-timeline-plugin-0.0.1.tgz"
+  },
+  "devDependencies": {
+    "@rozenite/metro": "^2.4.0",
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "plugin:refresh": "cd .. && bun run build && bun pm pack --destination example/.plugin && cd example && bun install --force",
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "export:prod": "expo export --platform ios --platform android --no-bytecode --output-dir dist/prod",
+    "export:dev": "expo export --platform ios --dev --no-bytecode --no-minify --output-dir dist/dev"
+  },
+  "private": true
+}
