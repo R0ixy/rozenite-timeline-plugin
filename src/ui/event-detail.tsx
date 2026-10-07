@@ -1,7 +1,7 @@
 import { Badge, Button, IconButton, JsonInspector, useCopyToClipboard, X } from '@rozenite/ui';
 import { Check, Copy } from 'lucide-react';
 import type { TimelineEvent } from '../shared/types';
-import { channelTone, formatTime, LEVEL_TONE, toPrettyJson } from './format';
+import { channelTone, formatTime, LEVEL_STYLE, toPrettyJson } from './format';
 
 export type EventDetailProps = {
   event: TimelineEvent;
@@ -51,7 +51,7 @@ export function EventDetail({ event, onClose }: EventDetailProps) {
             <span className="text-muted-foreground">({new Date(event.timestamp).toISOString()})</span>
           </MetaRow>
           <MetaRow label="Level">
-            <Badge size="sm" tone={LEVEL_TONE[event.level]} variant="soft">
+            <Badge size="sm" tone={LEVEL_STYLE[event.level].tone} variant="soft">
               {event.level}
             </Badge>
             {event.important && (

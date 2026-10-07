@@ -10,15 +10,6 @@ dist/
 # Test & coverage
 coverage/
 
-# Example app (Expo / Metro) — see also example/.gitignore
-example/.expo/
-example/dist/
-example/ios/
-example/android/
-example/web-build/
-example/.plugin/
-.metro-health-check*
-
 # Packed tarballs
 *.tgz
 

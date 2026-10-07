@@ -108,46 +108,17 @@ Empties the buffer in the app and in an open panel.
 
 ## How it behaves
 
-**Buffering.** Events go into a ring buffer of `maxEvents` entries from the moment the module loads, including events logged before the hook mounts or before DevTools opens. When the panel connects, it gets the whole buffer as a snapshot, then a live stream. A reloaded panel, or a reconnected app, gets a fresh snapshot.
+**Buffering.** Events go into a ring buffer of `maxEvents` entries from the moment the module loads. When a panel connects, or reloads, it gets the whole buffer, then a live stream.
 
-**Overhead.** While no panel is listening, `log()` builds a small metadata object and pushes it onto the ring buffer. That is all it does: no serialization, no timers, no messages. Payloads are kept by reference and serialized lazily, once, when a panel or an agent tool first asks for them. Events that arrive in bursts while the panel is open are batched, at most one message per 50 ms or every 250 events.
+**Overhead.** While no panel is listening, `log()` only pushes onto the ring buffer. Payloads are serialized lazily, the first time a panel or agent tool asks for them, and bursts are sent in batches. Because of this, an object you mutate after logging may show its later state if the panel was closed at the time; log a copy if that matters.
 
-> Because serialization is lazy, a payload object that you **mutate after logging** may show its later state if the panel wasn't open when you logged it. Log a copy (`{ ...state }`) if that matters.
+**Serialization.** Payloads become plain JSON: cycles become `"[Circular]"`, `Error`s become `{ name, message, stack, cause? }`, and `Date`, `Map`/`Set`, BigInt, functions and throwing getters all get readable stand-ins. Each payload is capped at 64 KiB (plus limits on string length, entries and depth). Anything cut is marked `[Truncated]` and the panel shows a "truncated" badge.
 
-**Serialization.** Payloads become plain JSON before they leave the app:
-
-| Input                         | Shown as                                         |
-| ----------------------------- | ------------------------------------------------ |
-| Cycles                        | `"[Circular]"` (shared, non-cyclic refs are kept) |
-| `Error`                       | `{ name, message, stack, cause?, …own fields }`  |
-| `Date`                        | ISO string                                       |
-| `Map` / `Set`                 | `{ __type: 'Map', size, entries }` / `{ __type: 'Set', size, values }` |
-| BigInt, Symbol, RegExp        | `"123n"`, `"Symbol(x)"`, `"/re/g"`               |
-| Functions                     | `"[Function: name]"`                             |
-| Typed arrays / `ArrayBuffer`  | `"[Uint8Array(1024 bytes)]"`                     |
-| Throwing getters / `toJSON`   | `"[Throws: message]"`                            |
-
-Limits: 64 KiB per payload, 10,000 characters per string, 500 entries per object or array, and 12 levels of depth. Anything cut is replaced by a visible `[Truncated]` marker, and the event gets `truncated: true`, which the panel shows as a badge.
-
-**Production.** With `process.env.NODE_ENV === 'production'`, every export is a cheap stub. `log`, `channel().log` and `clear` do nothing, and the hook returns `null`. Metro inlines `NODE_ENV`, so the `require()` of the real implementation is in a dead branch that the minifier removes. The implementation and `@rozenite/plugin-bridge` never reach the bundle. You can leave `timeline.log` calls in shipped code.
+**Production.** With `NODE_ENV === 'production'` every export is a no-op stub. Metro inlines `NODE_ENV`, so the real implementation sits in a dead branch that the minifier removes. You can leave `timeline.log` calls in shipped code.
 
 ## The panel
 
-- A virtualized list with the newest events at the bottom. It auto-scrolls while you're at the bottom and stops when you scroll up.
-- Each row shows the time, a channel badge, the name, the preview and a level colour (debug is muted, warn is amber, error is red). Important rows are highlighted and starred.
-- Click a row to open the detail pane, with a collapsible JSON tree of the payload, a **Copy payload** button and a **Copy event** button.
-- The toolbar has:
-  - free-text search over name, preview, tags and payload
-  - a multi-select channel filter, built from the channels seen so far
-  - a level filter
-  - pause and resume (events that arrive while paused are held, with a counter)
-  - clear, which also clears the app's buffer
-  - export of the visible events as JSON, falling back to the clipboard if downloads are blocked
-- Status indicator:
-  - **Waiting for app**: shown with setup instructions until the app answers.
-  - **Connected**: the app is streaming.
-  - **Disconnected**: the app stopped answering heartbeats. The last events stay visible, and the panel resyncs when the app comes back.
-- Light and dark themes come from `@rozenite/ui`, the same as the official Rozenite panels.
+A virtualized list (newest at the bottom, auto-scrolling until you scroll up) with time, channel badge, name, preview and level colour; important rows are highlighted. Click a row for a detail pane with a collapsible, copyable JSON tree. The toolbar has search (name, preview, tags and payload), channel and level filters, pause/resume, clear and JSON export. A status indicator shows whether the app is waiting, connected or disconnected. Light and dark themes come from `@rozenite/ui`.
 
 ## Agent tools
 
@@ -170,14 +141,6 @@ npx rozenite agent session create
 
 ```bash
 npx rozenite agent rozenite-timeline-plugin call --session <id> --tool list-events --args '{"channel":"analytics","limit":20}' --fields id,timestamp,name,preview,payload
-```
-
-Typed descriptors for `@rozenite/agent-sdk` are exported from `rozenite-timeline-plugin/sdk`:
-
-```ts
-import { timelineTools } from 'rozenite-timeline-plugin/sdk';
-
-const page = await session.tools.call(timelineTools.listEvents, { channel: 'analytics', limit: 20 });
 ```
 
 ## Recipes
@@ -278,8 +241,6 @@ bun run plugin:refresh   # rebuilds, packs and reinstalls the plugin tarball
 bun run ios              # or: bun run android
 ```
 
-From the repo root, `bun run verify:prod` exports the example's production iOS and Android bundles, plus a development bundle as a control, and greps them for strings that exist only in the plugin's implementation. See [Verifying the production no-op](#verifying-the-production-no-op).
-
 ## Development
 
 ```bash
@@ -294,14 +255,8 @@ bun run build      # rozenite build → dist/
 
 ### Verifying the production no-op
 
-1. **Unit test** (`src/__tests__/react-native-entry.test.ts`). With `NODE_ENV=production`, the entry imports without ever reaching its `require()` of the implementation, and every stub tolerates sloppy calls. With `NODE_ENV=development`, it does require the implementation.
-2. **Bundle grep** (`scripts/verify-production-bundle.mjs`, run with `bun run verify:prod`). `expo export` produces production bundles, which must contain the app's own code and none of these markers:
-   - the store's global key
-   - the plugin id
-   - serializer and agent-tool strings
-   - `@rozenite/plugin-bridge`'s `plugin-mounted` message
-
-   A development export of the same app must contain all of them, which proves the markers are real.
+- `src/__tests__/react-native-entry.test.ts` checks that a production import never requires the implementation, and that the stubs survive bad calls.
+- `bun run verify:prod` exports the example app's production iOS and Android bundles and greps them for strings that only exist in the plugin's implementation (`scripts/verify-production-bundle.mjs`). None may appear. A development export, used as a control, must contain all of them.
 
 ## License
 

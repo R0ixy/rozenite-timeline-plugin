@@ -12,19 +12,12 @@ export const formatTime = (timestamp: number): string => {
   )}`;
 };
 
-export const LEVEL_TONE: Record<TimelineLevel, Tone> = {
-  debug: 'neutral',
-  info: 'info',
-  warn: 'warning',
-  error: 'danger',
-};
-
-/** Row text colour per level; `info` keeps the default foreground. */
-export const LEVEL_TEXT_CLASS: Record<TimelineLevel, string> = {
-  debug: 'text-muted-foreground',
-  info: 'text-foreground',
-  warn: 'text-warning',
-  error: 'text-danger',
+/** How each level looks: badge tone, text colour, and the row's left stripe. */
+export const LEVEL_STYLE: Record<TimelineLevel, { tone: Tone; text: string; stripe: string }> = {
+  debug: { tone: 'neutral', text: 'text-muted-foreground', stripe: 'border-l-transparent' },
+  info: { tone: 'info', text: 'text-foreground', stripe: 'border-l-info' },
+  warn: { tone: 'warning', text: 'text-warning', stripe: 'border-l-warning' },
+  error: { tone: 'danger', text: 'text-danger', stripe: 'border-l-danger' },
 };
 
 // Level tones (warning, danger) are left out so a channel badge never reads

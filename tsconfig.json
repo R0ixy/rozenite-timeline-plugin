@@ -18,6 +18,6 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/**/*", "react-native.ts", "sdk.ts", "rozenite.config.ts", "vite.config.ts", "vitest.setup.ts"],
+  "include": ["src/**/*", "react-native.ts", "rozenite.config.ts", "vite.config.ts", "vitest.setup.ts"],
   "exclude": ["node_modules", "dist", "build", "example"]
 }

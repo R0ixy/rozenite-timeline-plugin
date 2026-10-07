@@ -1,14 +1,6 @@
-import {
-  defineAgentToolContract,
-  definePaginatedAgentToolContract,
-  type AgentToolContract,
-  type PageEnvelope,
-} from '@rozenite/agent-shared';
+import type { AgentTool, PageEnvelope } from '@rozenite/agent-bridge';
 import type { ChannelSummary } from './filters';
-import { TIMELINE_PLUGIN_ID } from './messaging';
 import { TIMELINE_LEVELS, type TimelineEvent, type TimelineLevel } from './types';
-
-export const TIMELINE_AGENT_PLUGIN_ID = TIMELINE_PLUGIN_ID;
 
 export type TimelineListEventsArgs = {
   channel?: string | string[];
@@ -45,7 +37,7 @@ const stringOrStringArray = (description: string, items: Record<string, unknown>
 });
 
 export const timelineToolDefinitions = {
-  listEvents: definePaginatedAgentToolContract<TimelineListEventsArgs, TimelineListEventsResult>({
+  listEvents: {
     name: 'list-events',
     description:
       'List events from the app timeline (analytics calls, feature-flag evaluations, auth transitions and other domain logs the app records with `timeline.log`). Newest first by default. Payloads are omitted unless requested through fields; use get-event for a single full event.',
@@ -98,8 +90,8 @@ export const timelineToolDefinitions = {
       ],
       defaultFields: ['id', 'timestamp', 'channel', 'name', 'preview', 'level', 'important'],
     },
-  }),
-  getEvent: defineAgentToolContract<TimelineGetEventArgs, TimelineGetEventResult>({
+  },
+  getEvent: {
     name: 'get-event',
     description: 'Read one timeline event by id, including its serialized payload.',
     readOnly: true,
@@ -111,21 +103,21 @@ export const timelineToolDefinitions = {
       },
       required: ['id'],
     },
-  }),
-  listChannels: defineAgentToolContract<TimelineListChannelsArgs, TimelineListChannelsResult>({
+  },
+  listChannels: {
     name: 'list-channels',
     description:
       'List the channels seen in the buffered timeline, with event counts and the time of the latest event on each.',
     readOnly: true,
     idempotent: true,
     inputSchema: { type: 'object', properties: {} },
-  }),
-  clear: defineAgentToolContract<TimelineClearArgs, TimelineClearResult>({
+  },
+  clear: {
     name: 'clear',
     description:
       'Delete every buffered timeline event in the app and in an open DevTools panel. Returns how many events were removed.',
     destructive: true,
     idempotent: true,
     inputSchema: { type: 'object', properties: {} },
-  }),
-} as const satisfies Record<string, AgentToolContract<unknown, unknown>>;
+  },
+} satisfies Record<string, AgentTool>;

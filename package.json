@@ -17,9 +17,6 @@
   "sideEffects": false,
   "files": [
     "dist",
-    "src",
-    "!src/**/__tests__",
-    "sdk.ts",
     "README.md"
   ],
   "scripts": {
@@ -31,7 +28,6 @@
   },
   "dependencies": {
     "@rozenite/agent-bridge": "^2.4.0",
-    "@rozenite/agent-shared": "^2.4.0",
     "@rozenite/plugin-bridge": "^2.4.0"
   },
   "devDependencies": {
@@ -64,11 +60,6 @@
       "import": "./dist/react-native/react-native.js",
       "require": "./dist/react-native/cjs/react-native.js"
     },
-    "./package.json": "./package.json",
-    "./sdk": {
-      "development": "./sdk.ts",
-      "types": "./dist/sdk/sdk.d.ts",
-      "default": "./dist/sdk/sdk.js"
-    }
+    "./package.json": "./package.json"
   }
 }
