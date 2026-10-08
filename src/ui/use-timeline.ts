@@ -1,20 +1,19 @@
 import { useRozeniteDevToolsClient } from '@rozenite/plugin-bridge';
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { TIMELINE_PLUGIN_ID, type TimelineEventMap } from '../shared/messaging';
 import type { TimelineEvent } from '../shared/types';
 
-/** How often the panel re-sends `hello` (until answered) or pings the app. */
-export const HEARTBEAT_INTERVAL_MS = 2000;
-/** Silence from the app for this long marks it disconnected. */
-export const DISCONNECT_AFTER_MS = 7000;
 const DEFAULT_MAX_EVENTS = 1000;
 
 /**
  * - `waiting`: no answer from the app yet (hook not mounted, or app not running).
  * - `connected`: the app answered and is streaming.
- * - `disconnected`: the app went quiet; the last known events stay visible.
+ *
+ * There is no "disconnected" state: when the app's JS context goes away
+ * (reload, crash, lost connection), the Rozenite host replaces this panel with
+ * a loader and mounts a fresh one once the app is back.
  */
-export type TimelineConnectionStatus = 'waiting' | 'connected' | 'disconnected';
+export type TimelineConnectionStatus = 'waiting' | 'connected';
 
 export type TimelineState = {
   status: TimelineConnectionStatus;
@@ -31,7 +30,6 @@ export type TimelineAction =
   | { type: 'snapshot'; events: TimelineEvent[]; maxEvents: number }
   | { type: 'events'; events: TimelineEvent[] }
   | { type: 'cleared' }
-  | { type: 'status'; status: TimelineConnectionStatus }
   | { type: 'set-paused'; paused: boolean };
 
 export const initialTimelineState: TimelineState = {
@@ -88,8 +86,6 @@ export const timelineReducer = (state: TimelineState, action: TimelineAction): T
     }
     case 'cleared':
       return { ...state, events: [], held: [] };
-    case 'status':
-      return state.status === action.status ? state : { ...state, status: action.status };
     case 'set-paused': {
       if (action.paused === state.paused) {
         return state;
@@ -110,68 +106,32 @@ export const timelineReducer = (state: TimelineState, action: TimelineAction): T
 export const useTimeline = () => {
   const client = useRozeniteDevToolsClient<TimelineEventMap>({ pluginId: TIMELINE_PLUGIN_ID });
   const [state, dispatch] = useReducer(timelineReducer, initialTimelineState);
-  const statusRef = useRef(state.status);
-  statusRef.current = state.status;
 
   useEffect(() => {
     if (!client) {
       return;
     }
 
-    let lastHeardAt = 0;
-    let hasSnapshot = false;
-    let nonce = 0;
-
+    // Ask for the app's buffer now, and again whenever the app (re)connects:
+    // if the panel opens first, the hook announces itself with `device-ready`.
     const hello = () => client.send('hello', {});
-    const markAlive = () => {
-      lastHeardAt = Date.now();
-      if (statusRef.current === 'disconnected') {
-        // Back from the dead: resync, the app may have restarted meanwhile.
-        hello();
-      }
-    };
 
     const subscriptions = [
       client.onMessage('snapshot', ({ events, maxEvents }) => {
-        hasSnapshot = true;
-        lastHeardAt = Date.now();
         dispatch({ type: 'snapshot', events, maxEvents });
       }),
-      client.onMessage('events', ({ events }) => {
-        markAlive();
-        dispatch({ type: 'events', events });
-      }),
-      client.onMessage('cleared', () => {
-        markAlive();
-        dispatch({ type: 'cleared' });
-      }),
-      client.onMessage('device-ready', () => {
-        // The app (re)started: its buffer is the new truth.
-        lastHeardAt = Date.now();
-        hello();
-      }),
-      client.onMessage('pong', () => markAlive()),
+      client.onMessage('events', ({ events }) => dispatch({ type: 'events', events })),
+      client.onMessage('cleared', () => dispatch({ type: 'cleared' })),
+      client.onMessage('device-ready', hello),
     ];
 
     hello();
 
-    const heartbeat = setInterval(() => {
-      if (!hasSnapshot) {
-        hello();
-        return;
-      }
-      nonce += 1;
-      client.send('ping', { nonce });
-      if (Date.now() - lastHeardAt > DISCONNECT_AFTER_MS) {
-        dispatch({ type: 'status', status: 'disconnected' });
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-
+    // Stop the app from streaming to a panel that's gone.
     const sayBye = () => client.send('bye', {});
     window.addEventListener('pagehide', sayBye);
 
     return () => {
-      clearInterval(heartbeat);
       window.removeEventListener('pagehide', sayBye);
       subscriptions.forEach((subscription) => subscription.remove());
       sayBye();

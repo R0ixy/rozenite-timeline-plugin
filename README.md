@@ -118,7 +118,7 @@ Empties the buffer in the app and in an open panel.
 
 ## The panel
 
-A virtualized list (newest at the bottom, auto-scrolling until you scroll up) with time, channel badge, name, preview and level colour; important rows are highlighted. Click a row for a detail pane with a collapsible, copyable JSON tree. The toolbar has search (name, preview, tags and payload), channel and level filters, pause/resume, clear and JSON export. A status indicator shows whether the app is waiting, connected or disconnected. Light and dark themes come from `@rozenite/ui`.
+A virtualized list (newest at the bottom, auto-scrolling until you scroll up) with time, channel badge, name, preview and level colour; important rows are highlighted. Click a row for a detail pane with a collapsible, copyable JSON tree. The toolbar has search (name, preview, tags and payload), channel and level filters, pause/resume, clear and JSON export. A status indicator shows whether the panel is still waiting for the app or connected. Light and dark themes come from `@rozenite/ui`.
 
 ## Agent tools
 

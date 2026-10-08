@@ -22,11 +22,9 @@ export type TimelineEventMap = {
   snapshot: { events: TimelineEvent[]; maxEvents: number };
   events: { events: TimelineEvent[] };
   cleared: Record<string, never>;
-  pong: { nonce: number };
 
   // panel -> device
   hello: Record<string, never>;
   bye: Record<string, never>;
   clear: Record<string, never>;
-  ping: { nonce: number };
 };

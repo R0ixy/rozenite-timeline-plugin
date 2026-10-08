@@ -42,7 +42,6 @@ const simulateApp = async ({ send, onMessage, signal }: DevFlowContext) => {
       send('snapshot', { events, maxEvents: 1000 });
     }),
     onMessage({ type: 'bye', direction: 'out' }, () => (streaming = false)),
-    onMessage({ type: 'ping', direction: 'out' }, ({ payload }) => send('pong', payload)),
     onMessage({ type: 'clear', direction: 'out' }, () => {
       events.length = 0;
       send('cleared', {});

@@ -33,7 +33,6 @@ export const connectTimelineToClient = (
     client.onMessage('clear', () => {
       store.clear();
     }),
-    client.onMessage('ping', ({ nonce }) => client.send('pong', { nonce })),
   ];
 
   // Lets an already-open panel know the app (re)started, so it asks for a

@@ -1,7 +1,7 @@
 import { getRozeniteDevToolsClient, type RozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 import { connectFakePair, RozeniteChannelProvider, waitForMessage } from '@rozenite/testing';
 import { render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TIMELINE_PLUGIN_ID, type TimelineEventMap } from '../shared/messaging';
 import { getTimelineStore, timeline } from '../react-native/timeline';
 import { useRozeniteTimelinePlugin } from '../react-native/useRozeniteTimelinePlugin';
@@ -127,22 +127,15 @@ describe('timeline protocol (device hook <-> panel client)', () => {
     panelClient.close();
   });
 
-  it('answers pings and stops streaming after bye', async () => {
+  it('stops streaming after bye', async () => {
     const { panelClient } = await setup();
-    const pong = waitForMessage(panelClient, 'pong', TIMEOUT);
-    panelClient.send('ping', { nonce: 7 });
-    expect(await pong).toEqual({ nonce: 7 });
-
     const snapshot = waitForMessage(panelClient, 'snapshot', TIMEOUT);
     panelClient.send('hello', {});
     await snapshot;
     expect(getTimelineStore().isAttached).toBe(true);
 
-    const pong2 = waitForMessage(panelClient, 'pong', TIMEOUT);
     panelClient.send('bye', {});
-    panelClient.send('ping', { nonce: 8 });
-    await pong2;
-    expect(getTimelineStore().isAttached).toBe(false);
+    await vi.waitFor(() => expect(getTimelineStore().isAttached).toBe(false), { timeout: 1000 });
 
     panelClient.close();
   });

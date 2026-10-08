@@ -30,13 +30,11 @@ timeline.log({ channel: 'analytics', name: 'EVENT', preview: 'checkout_started' 
 const STATUS_LABEL: Record<TimelineConnectionStatus, string> = {
   waiting: 'Waiting for app',
   connected: 'Connected',
-  disconnected: 'Disconnected',
 };
 
 const STATUS_TONE = {
   waiting: 'neutral',
   connected: 'success',
-  disconnected: 'danger',
 } as const;
 
 const getEventKey = (event: TimelineEvent) => event.id;
@@ -217,16 +215,6 @@ function TimelinePanelContent() {
   return (
     <PluginShell.Body className="overflow-hidden">
       {toolbar}
-      {timeline.status === 'disconnected' && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 border-b border-border bg-danger-soft px-3 py-1.5 text-xs text-danger"
-        >
-          <Unplug className="size-3.5" />
-          The app stopped responding. Showing the last events received; the timeline resyncs when it
-          reconnects.
-        </div>
-      )}
       <div className="min-h-0 flex-1">{body}</div>
     </PluginShell.Body>
   );
