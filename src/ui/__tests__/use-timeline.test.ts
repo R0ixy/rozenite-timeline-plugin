@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TimelineEvent } from '../../shared/types';
-import { initialTimelineState, timelineReducer, type TimelineState } from '../use-timeline';
+import { initialTimelineState, timelineReducer, type TimelineAction, type TimelineState } from '../use-timeline';
 
 let seq = 0;
 const makeEvent = (channel = 'c'): TimelineEvent => {
@@ -17,56 +17,94 @@ const makeEvent = (channel = 'c'): TimelineEvent => {
   };
 };
 
-const reduce = (state: TimelineState, ...actions: Parameters<typeof timelineReducer>[1][]) =>
-  actions.reduce(timelineReducer, state);
+const snapshot = (
+  events: TimelineEvent[],
+  overrides: Partial<Extract<TimelineAction, { type: 'snapshot' }>> = {},
+): TimelineAction => ({
+  type: 'snapshot',
+  sessionKey: 'app:0',
+  maxEvents: 10,
+  reset: true,
+  done: true,
+  events,
+  ...overrides,
+});
+
+const reduce = (state: TimelineState, ...actions: TimelineAction[]) => actions.reduce(timelineReducer, state);
+const seqs = (state: TimelineState) => state.events.map((event) => event.seq);
 
 describe('timelineReducer', () => {
-  it('replaces events on snapshot and marks the app connected', () => {
-    const state = reduce(
-      initialTimelineState,
-      { type: 'events', events: [makeEvent()] },
-      { type: 'snapshot', events: [makeEvent('a'), makeEvent('b')], maxEvents: 10 },
-    );
+  it('ignores live events until the first snapshot, then replaces on a reset', () => {
+    const [a, b, c] = [makeEvent('a'), makeEvent('b'), makeEvent('c')];
+    const state = reduce(initialTimelineState, { type: 'events', events: [a] }, snapshot([b, c]));
 
     expect(state.status).toBe('connected');
-    expect(state.events.map((event) => event.channel)).toEqual(['a', 'b']);
-    expect(state.channels).toEqual(['c', 'a', 'b']);
+    expect(seqs(state)).toEqual([b.seq, c.seq]);
+    expect(state.channels).toEqual(['b', 'c']);
+    expect(state.sessionKey).toBe('app:0');
+    expect(state.lastSeq).toBe(c.seq);
+  });
+
+  it('appends chunks and live events, dropping duplicates by seq', () => {
+    const [a, b, c, d] = [makeEvent(), makeEvent(), makeEvent(), makeEvent()];
+    const state = reduce(
+      initialTimelineState,
+      snapshot([a, b], { done: false }),
+      snapshot([c], { reset: false }),
+      { type: 'events', events: [d] },
+      // A lease renewal raced with the live send of `d`.
+      snapshot([d], { reset: false }),
+      { type: 'events', events: [c] },
+    );
+
+    expect(seqs(state)).toEqual([a.seq, b.seq, c.seq, d.seq]);
+    expect(state.lastSeq).toBe(d.seq);
+  });
+
+  it('replaces everything when the snapshot comes from another session', () => {
+    const [a, b] = [makeEvent(), makeEvent()];
+    const restarted = makeEvent();
+    restarted.seq = 1;
+    const state = reduce(
+      initialTimelineState,
+      snapshot([a, b]),
+      snapshot([restarted], { sessionKey: 'app-restarted:0', reset: false }),
+    );
+
+    expect(state.events).toEqual([restarted]);
+    expect(state.lastSeq).toBe(1);
   });
 
   it('keeps at most maxEvents, dropping the oldest', () => {
-    const state = reduce(
-      initialTimelineState,
-      { type: 'snapshot', events: [makeEvent(), makeEvent()], maxEvents: 3 },
-      { type: 'events', events: [makeEvent(), makeEvent()] },
-    );
+    const events = Array.from({ length: 5 }, () => makeEvent());
+    const state = reduce(initialTimelineState, snapshot(events.slice(0, 2), { maxEvents: 3 }), {
+      type: 'events',
+      events: events.slice(2),
+    });
 
-    expect(state.events).toHaveLength(3);
-    expect(state.events[0].seq).toBeGreaterThan(seq - 3);
+    expect(seqs(state)).toEqual(events.slice(2).map((event) => event.seq));
   });
 
-  it('holds events while paused and appends them on resume', () => {
+  it('ignores whatever is still in flight while paused; resuming refetches it', () => {
+    const [a, b, c] = [makeEvent(), makeEvent(), makeEvent()];
     const paused = reduce(
       initialTimelineState,
-      { type: 'snapshot', events: [makeEvent()], maxEvents: 10 },
+      snapshot([a]),
       { type: 'set-paused', paused: true },
-      { type: 'events', events: [makeEvent('late')] },
+      { type: 'events', events: [b] },
+      snapshot([c]),
     );
 
-    expect(paused.events).toHaveLength(1);
-    expect(paused.held).toHaveLength(1);
-    expect(paused.channels).toContain('late');
+    expect(seqs(paused)).toEqual([a.seq]);
+    // The resume point still points after `a`, so the app sends `b` and `c`.
+    expect(paused.lastSeq).toBe(a.seq);
 
-    const resumed = reduce(paused, { type: 'set-paused', paused: false });
-    expect(resumed.events).toHaveLength(2);
-    expect(resumed.held).toEqual([]);
+    const resumed = reduce(paused, { type: 'set-paused', paused: false }, snapshot([b, c], { reset: false }));
+    expect(seqs(resumed)).toEqual([a.seq, b.seq, c.seq]);
   });
 
   it('clears events but remembers channels for the filter', () => {
-    const state = reduce(
-      initialTimelineState,
-      { type: 'snapshot', events: [makeEvent('analytics')], maxEvents: 10 },
-      { type: 'cleared' },
-    );
+    const state = reduce(initialTimelineState, snapshot([makeEvent('analytics')]), { type: 'cleared' });
 
     expect(state.events).toEqual([]);
     expect(state.channels).toEqual(['analytics']);

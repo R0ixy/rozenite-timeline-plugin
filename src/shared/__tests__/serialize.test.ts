@@ -225,4 +225,22 @@ describe('serializeToJson', () => {
 
     expect(JSON.parse(serializeToJson(hostile).json)).toEqual({ ok: 1, boom: '[Throws: nope]' });
   });
+
+  it('keeps objects with undefined fields on the same output as the careful path', () => {
+    const value = { userId: 'u1', coupon: undefined, nested: { a: undefined, b: 1 } };
+
+    expect(serializeToJson(value)).toEqual({ json: '{"userId":"u1","nested":{"b":1}}', truncated: false });
+    expect(serializeToJson(value).json).toBe(viaSafeSerialize(value));
+  });
+
+  it('keeps an own __proto__ key on both paths', () => {
+    const plain = JSON.parse('{"__proto__":{"x":1},"a":1}');
+    const withDate = Object.assign(JSON.parse('{"__proto__":{"x":1},"a":1}'), { when: new Date(0) });
+
+    expect(JSON.parse(serializeToJson(plain).json)).toEqual(plain);
+    expect(serializeToJson(withDate).json).toBe(
+      '{"__proto__":{"x":1},"a":1,"when":"1970-01-01T00:00:00.000Z"}',
+    );
+  });
 });
+

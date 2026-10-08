@@ -4,23 +4,51 @@ import {
   type TimelineEvent,
   type TimelineEventInput,
 } from '../shared/types';
+import { reportInternalError } from './report';
 import { RingBuffer } from './ring-buffer';
 
 export const DEFAULT_MAX_EVENTS = 1000;
 const MAX_PREVIEW_LENGTH = 1000;
+/** A replay chunk is closed once it holds this many events… */
+const DEFAULT_CHUNK_EVENTS = 100;
+/** …or this much payload JSON, whichever comes first. */
+const DEFAULT_CHUNK_BYTES = 256 * 1024;
+
+/** One piece of a (possibly multi-message) replay of the buffer. */
+export type TimelineSnapshotChunk = {
+  /** Identifies the buffer's contents; changes on app restart and on clear. */
+  sessionKey: string;
+  maxEvents: number;
+  /** First chunk of a full replay: the panel drops what it had. */
+  reset: boolean;
+  events: TimelineEvent[];
+  /** Last chunk: from here on, events are streamed as they are logged. */
+  done: boolean;
+};
 
 /** Receives events while a panel is listening. */
 export type TimelineSink = {
+  onSnapshot: (chunk: TimelineSnapshotChunk) => void;
   onEvents: (events: TimelineEvent[]) => void;
   onCleared: () => void;
+};
+
+/** Where a reconnecting panel left off, so only newer events are replayed. */
+export type TimelineResumePoint = {
+  sessionKey?: string;
+  afterSeq?: number;
 };
 
 export type TimelineStoreOptions = {
   maxEvents?: number;
   serializeOptions?: SerializeOptions;
   now?: () => number;
+  chunkEvents?: number;
+  chunkBytes?: number;
   /** Injection seam for tests. */
   serialize?: typeof serializeToJson;
+  /** Injection seam for tests: how replay yields between chunks. */
+  schedule?: (callback: () => void) => void;
 };
 
 type Entry = {
@@ -65,22 +93,57 @@ const normalizePreview = (preview: unknown): string | undefined => {
 /**
  * The device-side event buffer.
  *
- * While a panel is attached, `log()` serializes the event and hands it to the
- * sink synchronously — like the Redux DevTools plugin, there is no batching
- * timer between the call and the bridge. While no panel is attached, `log()`
- * only pushes onto the ring buffer; the payload is kept by reference and
- * serialized when (and if) something asks for it — a panel connecting, or an
- * agent tool call.
+ * While a panel is attached and live, `log()` serializes the event and hands
+ * it to the sink synchronously — like the Redux DevTools plugin, there is no
+ * batching timer between the call and the bridge. Otherwise (no panel, a
+ * paused panel, or a replay still in progress) `log()` only pushes onto the
+ * ring buffer; the payload is kept by reference and serialized when (and if)
+ * something asks for it.
+ *
+ * Attaching replays the buffer in chunks, yielding to the app between them,
+ * so opening the panel on a full buffer never blocks the JS thread for long.
+ * A panel that knows where it left off gets only the newer events.
  */
 export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
   const now = options.now ?? Date.now;
   const serializeOptions = options.serializeOptions;
   const serialize = options.serialize ?? serializeToJson;
+  const chunkEvents = options.chunkEvents ?? DEFAULT_CHUNK_EVENTS;
+  const chunkBytes = options.chunkBytes ?? DEFAULT_CHUNK_BYTES;
+  const schedule = options.schedule ?? ((callback: () => void) => setTimeout(callback, 0));
   const sessionPrefix = createSessionPrefix();
 
   const buffer = new RingBuffer<Entry>(options.maxEvents ?? DEFAULT_MAX_EVENTS);
   let seq = 0;
+  let generation = 0;
   let sink: TimelineSink | null = null;
+  /** True once the replay has caught up and events stream as logged. */
+  let live = false;
+  /** Identifies the replay in progress; a new attach or a detach cancels it. */
+  let replayToken: object | null = null;
+
+  const sessionKey = () => `${sessionPrefix}:${generation}`;
+
+  const detach = (sinkToRemove?: TimelineSink) => {
+    if (sinkToRemove !== undefined && sinkToRemove !== sink) {
+      return;
+    }
+    sink = null;
+    live = false;
+    replayToken = null;
+  };
+
+  /** Calls into the bridge; a failure detaches instead of reaching the app. */
+  const deliver = (target: TimelineSink, send: () => void): boolean => {
+    try {
+      send();
+      return true;
+    } catch (error) {
+      detach(target);
+      reportInternalError(error);
+      return false;
+    }
+  };
 
   const materialize = (entry: Entry): TimelineEvent => {
     if (!entry.serialized) {
@@ -125,7 +188,47 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     };
     buffer.push(entry);
 
-    sink?.onEvents([materialize(entry)]);
+    if (live && sink !== null) {
+      const target = sink;
+      deliver(target, () => target.onEvents([materialize(entry)]));
+    }
+  };
+
+  const replay = (target: TimelineSink, token: object, afterSeq: number, reset: boolean) => {
+    if (replayToken !== token) {
+      return;
+    }
+    const pending = buffer.toArray().filter((entry) => entry.event.seq > afterSeq);
+    const events: TimelineEvent[] = [];
+    let bytes = 0;
+    for (const entry of pending) {
+      if (events.length >= chunkEvents || bytes >= chunkBytes) {
+        break;
+      }
+      const event = materialize(entry);
+      bytes += event.payloadJson?.length ?? 0;
+      events.push(event);
+    }
+    const done = events.length === pending.length;
+    if (done) {
+      // Go live before sending, in the same tick: nothing logged after this
+      // point can fall between the last chunk and the stream.
+      live = true;
+      replayToken = null;
+    }
+    const chunk: TimelineSnapshotChunk = {
+      sessionKey: sessionKey(),
+      maxEvents: buffer.capacity,
+      reset,
+      events,
+      done,
+    };
+    if (!deliver(target, () => target.onSnapshot(chunk)) || done) {
+      return;
+    }
+    // Events logged while we yield have higher seqs: a later chunk picks them up.
+    const nextAfter = events[events.length - 1].seq;
+    schedule(() => replay(target, token, nextAfter, false));
   };
 
   return {
@@ -155,29 +258,45 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     clear: (): number => {
       const cleared = buffer.size;
       buffer.clear();
-      sink?.onCleared();
+      // Any resume point a panel holds is now meaningless.
+      generation += 1;
+      if (sink !== null) {
+        const target = sink;
+        deliver(target, () => target.onCleared());
+      }
       return cleared;
     },
 
     /**
-     * Starts streaming to `nextSink`. Returns the current buffer, so the
-     * caller can send it as the initial snapshot; anything logged afterwards
-     * reaches the sink as it is logged.
+     * Starts (or restarts) streaming to `nextSink`: replays the buffer in
+     * chunks through `onSnapshot`, then streams new events through `onEvents`.
+     * With a resume point from the same session and no events lost to
+     * eviction since, only the newer events are replayed.
      */
-    attach: (nextSink: TimelineSink): TimelineEvent[] => {
+    attach: (nextSink: TimelineSink, from: TimelineResumePoint = {}) => {
       sink = nextSink;
-      return buffer.toArray().map(materialize);
+      live = false;
+      const token = {};
+      replayToken = token;
+
+      const oldest = buffer.toArray()[0]?.event.seq;
+      const canResume =
+        from.sessionKey === sessionKey() &&
+        typeof from.afterSeq === 'number' &&
+        (oldest === undefined || oldest <= from.afterSeq + 1);
+
+      replay(nextSink, token, canResume ? (from.afterSeq as number) : 0, !canResume);
     },
 
-    detach: (sinkToRemove?: TimelineSink) => {
-      if (sinkToRemove !== undefined && sinkToRemove !== sink) {
-        return;
-      }
-      sink = null;
-    },
+    detach,
 
     get isAttached() {
       return sink !== null;
+    },
+
+    /** Attached and past the replay: `log()` sends synchronously. */
+    get isLive() {
+      return live;
     },
   };
 };

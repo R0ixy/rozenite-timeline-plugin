@@ -29,7 +29,8 @@ const renderPair = () => {
 const rowNames = () =>
   screen.queryAllByTestId('timeline-row').map((row) => row.querySelector('.font-semibold')?.textContent);
 
-const waitForBatch = () => act(() => new Promise((resolve) => setTimeout(resolve, 80)));
+/** Lets in-flight bridge messages land; used only to assert that something did NOT arrive. */
+const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 80)));
 
 describe('panel <-> app round trip', () => {
   beforeEach(() => {
@@ -78,7 +79,7 @@ describe('panel <-> app round trip', () => {
     act(() => {
       timeline.log({ channel: 'analytics', name: 'SCREEN', preview: 'Home' });
     });
-    await waitForBatch();
+    await settle();
     expect(screen.queryByText('Home')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Resume/ }));
     expect(await screen.findByText('Home')).toBeTruthy();
@@ -86,7 +87,7 @@ describe('panel <-> app round trip', () => {
     // Clear empties the panel and the app buffer.
     fireEvent.click(screen.getByRole('button', { name: /Clear/ }));
     expect(await screen.findByText('No events yet')).toBeTruthy();
-    await waitForBatch();
+    await settle();
     expect(getTimelineStore().size).toBe(0);
   });
 

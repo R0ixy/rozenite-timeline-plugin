@@ -37,9 +37,18 @@ const simulateApp = async ({ send, onMessage, signal }: DevFlowContext) => {
   let streaming = false;
 
   const subscriptions = [
-    onMessage({ type: 'hello', direction: 'out' }, () => {
+    onMessage({ type: 'hello', direction: 'out' }, ({ payload }) => {
       streaming = true;
-      send('snapshot', { events, maxEvents: 1000 });
+      // Like the real app: resume after `afterSeq` when the panel already has this session.
+      const { sessionKey, afterSeq } = (payload ?? {}) as { sessionKey?: string; afterSeq?: number };
+      const resume = sessionKey === 'dev' && typeof afterSeq === 'number';
+      send('snapshot', {
+        sessionKey: 'dev',
+        maxEvents: 1000,
+        reset: !resume,
+        events: resume ? events.filter((event) => event.seq > (afterSeq as number)) : events,
+        done: true,
+      });
     }),
     onMessage({ type: 'bye', direction: 'out' }, () => (streaming = false)),
     onMessage({ type: 'clear', direction: 'out' }, () => {

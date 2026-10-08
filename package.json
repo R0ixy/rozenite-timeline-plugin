@@ -1,6 +1,6 @@
 {
   "name": "rozenite-timeline-plugin",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A Rozenite plugin that adds a filterable, channel-based event timeline to React Native DevTools.",
   "keywords": [
     "rozenite",
@@ -15,15 +15,25 @@
   "type": "module",
   "packageManager": "bun@1.3.10",
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/r0ixy/rozenite-timeline-plugin.git"
+  },
+  "homepage": "https://github.com/r0ixy/rozenite-timeline-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/r0ixy/rozenite-timeline-plugin/issues"
+  },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "rozenite build",
     "dev": "rozenite dev",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --run",
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build",
     "verify:prod": "cd example && bun run export:prod && bun run export:dev && node ../scripts/verify-production-bundle.mjs dist/prod dist/dev"
   },
   "dependencies": {

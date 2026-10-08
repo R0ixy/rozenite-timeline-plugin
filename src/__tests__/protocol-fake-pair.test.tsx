@@ -26,7 +26,14 @@ const setup = async (maxEvents?: number) => {
   );
   await deviceReady;
 
-  return { panelClient, view };
+  const setMaxEvents = (next: number) =>
+    view.rerender(
+      <RozeniteChannelProvider channel={device} role="device">
+        <DeviceHost maxEvents={next} />
+      </RozeniteChannelProvider>,
+    );
+
+  return { panelClient, view, setMaxEvents };
 };
 
 describe('timeline protocol (device hook <-> panel client)', () => {
@@ -174,4 +181,16 @@ describe('timeline protocol (device hook <-> panel client)', () => {
     expect(tools.size).toBe(0);
     panelClient.close();
   });
+
+  it('tells an open panel when maxEvents changes', async () => {
+    const { panelClient, setMaxEvents } = await setup(100);
+
+    const announced = waitForMessage(panelClient, 'device-ready', TIMEOUT);
+    setMaxEvents(250);
+
+    expect(await announced).toEqual({ maxEvents: 250 });
+    expect(getTimelineStore().maxEvents).toBe(250);
+    panelClient.close();
+  });
 });
+

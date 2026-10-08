@@ -1,5 +1,4 @@
 import {
-  Badge,
   EmptyState,
   IndicatorDot,
   PluginShell,
@@ -125,13 +124,8 @@ function TimelinePanelContent() {
         >
           {timeline.paused ? <Play /> : <Pause />}
           {timeline.paused ? 'Resume' : 'Pause'}
-          {timeline.paused && timeline.held.length > 0 && (
-            <Badge size="sm" tone="primary">
-              +{timeline.held.length}
-            </Badge>
-          )}
         </Toolbar.Button>
-        <Toolbar.Button onClick={handleClear} disabled={timeline.events.length === 0 && timeline.held.length === 0}>
+        <Toolbar.Button onClick={handleClear} disabled={timeline.events.length === 0}>
           <Trash2 />
           Clear
         </Toolbar.Button>
@@ -145,8 +139,8 @@ function TimelinePanelContent() {
         role="status"
         className="flex items-center gap-1.5 px-1 text-xs whitespace-nowrap text-muted-foreground"
       >
-        <IndicatorDot tone={STATUS_TONE[timeline.status]} />
-        {STATUS_LABEL[timeline.status]}
+        <IndicatorDot tone={timeline.paused ? 'warning' : STATUS_TONE[timeline.status]} />
+        {timeline.paused ? 'Paused' : STATUS_LABEL[timeline.status]}
         <span aria-label="Event count">
           · {isFiltering ? `${visible.length} / ` : ''}
           {timeline.events.length}
@@ -175,8 +169,8 @@ function TimelinePanelContent() {
         icon={Activity}
         title="No events yet"
         description={
-          timeline.paused && timeline.held.length > 0
-            ? `${timeline.held.length} events arrived while paused. Resume to show them.`
+          timeline.paused
+            ? 'Paused. Events logged meanwhile are kept in the app and shown when you resume.'
             : 'Events logged with timeline.log() appear here as they happen.'
         }
       />

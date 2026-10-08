@@ -190,7 +190,17 @@ const walkEntries = (
     }
     const serialized = walk(state, entryValue, depth + 1);
     if (serialized !== undefined) {
-      target[key] = serialized;
+      if (key === '__proto__') {
+        // Plain assignment would set the prototype and lose the field.
+        Object.defineProperty(target, key, {
+          value: serialized,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        target[key] = serialized;
+      }
     }
     written += 1;
   }
@@ -305,8 +315,10 @@ export type SerializeToJsonResult = {
 /**
  * True when native `JSON.stringify` would encode `root` losslessly and within
  * the limits: only plain objects, arrays, strings, finite numbers, booleans
- * and null, no cycles, no `undefined` holes. Allocates nothing, so it is far
- * cheaper than `safeSerialize`'s copying walk on an interpreter like Hermes.
+ * and null, no cycles, no `undefined` array holes. Allocates nothing, so it
+ * is far cheaper than `safeSerialize`'s copying walk on an interpreter like
+ * Hermes. Getters on plain objects run twice (here, then in `JSON.stringify`);
+ * payloads are data, so that's an accepted trade-off.
  */
 const isPlainJson = (root: unknown, limits: Required<SerializeOptions>): boolean => {
   let budget = limits.maxBytes;
@@ -361,9 +373,17 @@ const isPlainJson = (root: unknown, limits: Required<SerializeOptions>): boolean
     let entries = 0;
     for (const key in value) {
       entries += 1;
+      if (entries > limits.maxEntries) {
+        return false;
+      }
       const entry = (value as Record<string, unknown>)[key];
+      // Both encoders drop `undefined` object fields, so they stay on the
+      // fast path. (In arrays JSON writes `null`, so those fall back.)
+      if (entry === undefined) {
+        continue;
+      }
       budget -= key.length + 3;
-      if (entries > limits.maxEntries || entry === undefined || !visit(entry, depth + 1)) {
+      if (!visit(entry, depth + 1)) {
         return false;
       }
     }

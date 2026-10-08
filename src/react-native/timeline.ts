@@ -1,4 +1,5 @@
 import type { TimelineChannelEventInput, TimelineEventInput } from '../shared/types';
+import { reportInternalError } from './report';
 import { createTimelineStore, type TimelineStore } from './store';
 
 export type TimelineChannelLogger = {
@@ -30,21 +31,6 @@ export const getTimelineStore = (): TimelineStore => {
     host[GLOBAL_KEY] = store;
   }
   return store;
-};
-
-let warned = false;
-
-const reportInternalError = (error: unknown) => {
-  // A timeline bug must never become an app bug: report once and move on.
-  if (warned) {
-    return;
-  }
-  warned = true;
-  try {
-    console.warn('[rozenite-timeline-plugin] Internal error, event dropped.', error);
-  } catch {
-    // Nothing left to do.
-  }
 };
 
 const log = (input: TimelineEventInput) => {

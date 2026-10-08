@@ -108,9 +108,9 @@ Empties the buffer in the app and in an open panel.
 
 ## How it behaves
 
-**Buffering.** Events go into a ring buffer of `maxEvents` entries from the moment the module loads. When a panel connects, or reloads, it gets the whole buffer, then a live stream.
+**Buffering.** Events go into a ring buffer of `maxEvents` entries from the moment the module loads. When a panel connects, it gets the buffer replayed in chunks (the app yields between them, so a full buffer never blocks the JS thread for long), then a live stream. A panel that reconnects to the same app run — after a reload, a pause, or a throttled background tab — only fetches the events it hasn't seen.
 
-**Overhead.** While the panel is open, `log()` serializes the event and sends it synchronously, inside the call — like the Redux DevTools plugin, there is no batching delay. Plain JSON payloads take a fast path (a cheap check, then native `JSON.stringify`), and the payload travels as a JSON string that the panel parses only when you open the event. While no panel is listening, `log()` only pushes onto the ring buffer and payloads are serialized later, when a panel or agent tool first asks for them; an object you mutate after logging in that state may show its later value, so log a copy if that matters.
+**Overhead.** While the panel is open, `log()` serializes the event and sends it synchronously, inside the call — like the Redux DevTools plugin, there is no batching delay. Plain JSON payloads take a fast path (a cheap check, then native `JSON.stringify`), and the payload travels as a JSON string that the panel parses only when you open the event. While no panel is listening — or the panel is paused, or it vanished without saying goodbye (the app stops streaming if the panel doesn't renew its 30-second lease) — `log()` only pushes onto the ring buffer, and payloads are serialized later, when a panel or agent tool first asks for them. Two consequences of that laziness: an object you mutate after logging may show its later value, so log a copy if that matters; and the buffer holds references to up to `maxEvents` payloads, so logging large objects (say, whole state trees) keeps them in memory until they're evicted.
 
 **Serialization.** Payloads become plain JSON: cycles become `"[Circular]"`, `Error`s become `{ name, message, stack, cause? }`, and `Date`, `Map`/`Set`, BigInt, functions and throwing getters all get readable stand-ins. Each payload is capped at 64 KiB (plus limits on string length, entries and depth). Anything cut is marked `[Truncated]` and the panel shows a "truncated" badge.
 
@@ -118,7 +118,7 @@ Empties the buffer in the app and in an open panel.
 
 ## The panel
 
-A virtualized list (newest at the bottom, auto-scrolling until you scroll up) with time, channel badge, name, preview and level colour; important rows are highlighted. Click a row for a detail pane with a collapsible, copyable JSON tree. The toolbar has search (name, preview, tags and payload), channel and level filters, pause/resume, clear and JSON export. A status indicator shows whether the panel is still waiting for the app or connected. Light and dark themes come from `@rozenite/ui`.
+A virtualized list (newest at the bottom, auto-scrolling until you scroll up) with time, channel badge, name, preview and level colour; important rows are highlighted. Click a row for a detail pane with a collapsible, copyable JSON tree. The toolbar has search (name, preview, tags and payload), channel and level filters, pause/resume (pausing stops the app from sending, so it also saves app CPU; resuming fetches what was logged meanwhile), clear and JSON export. A status indicator shows whether the panel is still waiting for the app or connected. Light and dark themes come from `@rozenite/ui`.
 
 ## Agent tools
 
