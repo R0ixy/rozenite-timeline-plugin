@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   serializeToJson,
+  utf8Length,
   CIRCULAR_MARKER,
   MAX_DEPTH_MARKER,
   safeSerialize,
@@ -241,6 +242,49 @@ describe('serializeToJson', () => {
     expect(serializeToJson(withDate).json).toBe(
       '{"__proto__":{"x":1},"a":1,"when":"1970-01-01T00:00:00.000Z"}',
     );
+  });
+
+  describe('size cap', () => {
+    const bytesOf = (text: string) => new TextEncoder().encode(text).length;
+
+    it('counts UTF-8 bytes like the platform encoder', () => {
+      for (const text of ['ascii', 'é', '漢字', '😀 emoji', '\u0000', 'mixed é漢😀a', '\ud800']) {
+        expect(utf8Length(text)).toBe(bytesOf(text));
+      }
+    });
+
+    it('caps payloads whose escapes or characters grow in encoding', () => {
+      const cases = {
+        nullChars: Array.from({ length: 6 }, () => '\u0000'.repeat(10_000)),
+        quotes: Array.from({ length: 6 }, () => '"'.repeat(10_000)),
+        cjk: Array.from({ length: 6 }, () => '漢'.repeat(10_000)),
+        emoji: Array.from({ length: 6 }, () => '😀'.repeat(5_000)),
+        slowPath: { when: new Date(0), strings: Array.from({ length: 6 }, () => '\u0000'.repeat(10_000)) },
+      };
+
+      for (const value of Object.values(cases)) {
+        const { json, truncated } = serializeToJson(value);
+        expect(truncated).toBe(true);
+        expect(bytesOf(json)).toBeLessThanOrEqual(64 * 1024);
+        expect(() => JSON.parse(json)).not.toThrow();
+      }
+    });
+
+    it('leaves payloads within the cap untouched', () => {
+      const value = { text: 'a'.repeat(10_000), cjk: '漢'.repeat(5_000) };
+
+      expect(serializeToJson(value)).toEqual({ json: JSON.stringify(value), truncated: false });
+    });
+
+    it('holds for small custom caps', () => {
+      const value = { rows: Array.from({ length: 50 }, (_, index) => ({ index, label: `ラベル ${index}` })) };
+
+      for (const maxBytes of [64, 256, 1000]) {
+        const { json, truncated } = serializeToJson(value, { maxBytes });
+        expect(truncated).toBe(true);
+        expect(bytesOf(json)).toBeLessThanOrEqual(maxBytes);
+      }
+    });
   });
 });
 

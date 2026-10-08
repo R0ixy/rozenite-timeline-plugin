@@ -399,22 +399,82 @@ const isPlainJson = (root: unknown, limits: Required<SerializeOptions>): boolean
  * (a cheap check, then native `JSON.stringify`); anything else goes through
  * `safeSerialize`. Never throws.
  */
-export const serializeToJson = (
-  value: unknown,
-  options: SerializeOptions = {},
-): SerializeToJsonResult => {
-  const limits = { ...DEFAULT_SERIALIZE_OPTIONS, ...options };
-  try {
-    if (isPlainJson(value, limits)) {
-      return { json: JSON.stringify(value), truncated: false };
+/**
+ * UTF-8 size of `text`. Each UTF-16 code unit encodes to at most 3 bytes (a
+ * surrogate pair, two units, to 4), so callers can skip this scan whenever
+ * `text.length * 3` is already within budget.
+ */
+export const utf8Length = (text: string): number => {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
+      // A high surrogate and its partner: one 4-byte code point.
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
     }
-  } catch {
-    // A throwing getter or proxy trap: let the careful path describe it.
   }
+  return bytes;
+};
+
+const fitsInBytes = (json: string, maxBytes: number): boolean =>
+  json.length * 3 <= maxBytes || utf8Length(json) <= maxBytes;
+
+const MAX_SHRINK_ATTEMPTS = 4;
+
+const encodeCarefully = (value: unknown, options: SerializeOptions): SerializeToJsonResult => {
   const { value: safe, truncated } = safeSerialize(value, options);
   try {
     return { json: JSON.stringify(safe), truncated };
   } catch (error) {
     return { json: JSON.stringify(`[Unserializable: ${describeThrown(error)}]`), truncated: true };
   }
+};
+
+/**
+ * Serializes straight to JSON text, capped at `maxBytes` of UTF-8. Plain JSON
+ * data takes the fast path (a cheap check, then native `JSON.stringify`);
+ * anything else goes through `safeSerialize`. The walk can only estimate size
+ * (escapes like `\u0000` and multi-byte characters grow in encoding), so the
+ * finished text is measured too, and re-encoded with a smaller budget if it
+ * came out too big. Never throws.
+ */
+export const serializeToJson = (
+  value: unknown,
+  options: SerializeOptions = {},
+): SerializeToJsonResult => {
+  const limits = { ...DEFAULT_SERIALIZE_OPTIONS, ...options };
+  let result: SerializeToJsonResult | null = null;
+  try {
+    if (isPlainJson(value, limits)) {
+      result = { json: JSON.stringify(value), truncated: false };
+    }
+  } catch {
+    // A throwing getter or proxy trap: let the careful path describe it.
+  }
+  result ??= encodeCarefully(value, options);
+
+  // Shrink the walk's budget in proportion to the overshoot until it fits.
+  let budget = limits.maxBytes;
+  for (let attempt = 0; attempt < MAX_SHRINK_ATTEMPTS; attempt += 1) {
+    if (fitsInBytes(result.json, limits.maxBytes)) {
+      return result;
+    }
+    budget = Math.floor((budget * limits.maxBytes * 0.9) / utf8Length(result.json));
+    const shrunk = encodeCarefully(value, { ...options, maxBytes: budget });
+    result = { json: shrunk.json, truncated: true };
+  }
+  if (fitsInBytes(result.json, limits.maxBytes)) {
+    return result;
+  }
+  return {
+    json: JSON.stringify(`${TRUNCATED_MARKER} payload exceeds ${limits.maxBytes} bytes`),
+    truncated: true,
+  };
 };

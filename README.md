@@ -112,7 +112,7 @@ Empties the buffer in the app and in an open panel.
 
 **Overhead.** While the panel is open, `log()` serializes the event and sends it synchronously, inside the call — like the Redux DevTools plugin, there is no batching delay. Plain JSON payloads take a fast path (a cheap check, then native `JSON.stringify`), and the payload travels as a JSON string that the panel parses only when you open the event. While no panel is listening — or the panel is paused, or it vanished without saying goodbye (the app stops streaming if the panel doesn't renew its 30-second lease) — `log()` only pushes onto the ring buffer, and payloads are serialized later, when a panel or agent tool first asks for them. Two consequences of that laziness: an object you mutate after logging may show its later value, so log a copy if that matters; and the buffer holds references to up to `maxEvents` payloads, so logging large objects (say, whole state trees) keeps them in memory until they're evicted.
 
-**Serialization.** Payloads become plain JSON: cycles become `"[Circular]"`, `Error`s become `{ name, message, stack, cause? }`, and `Date`, `Map`/`Set`, BigInt, functions and throwing getters all get readable stand-ins. Each payload is capped at 64 KiB (plus limits on string length, entries and depth). Anything cut is marked `[Truncated]` and the panel shows a "truncated" badge.
+**Serialization.** Payloads become plain JSON: cycles become `"[Circular]"`, `Error`s become `{ name, message, stack, cause? }`, and `Date`, `Map`/`Set`, BigInt, functions and throwing getters all get readable stand-ins. Each payload is capped at 64 KiB of UTF-8 JSON, measured after encoding, so escapes and multi-byte text count at their real size (plus limits on string length, entries and depth). Anything cut is marked `[Truncated]` and the panel shows a "truncated" badge.
 
 **Production.** With `NODE_ENV === 'production'` every export is a no-op stub. Metro inlines `NODE_ENV`, so the real implementation sits in a dead branch that the minifier removes. You can leave `timeline.log` calls in shipped code.
 
@@ -237,7 +237,7 @@ The same pattern works for Zustand (`subscribe`), MobX (`spy`) or any event emit
 bun install && bun run build
 cd example
 bun install
-bun run plugin:refresh   # rebuilds, packs and reinstalls the plugin tarball
+bun run plugin:refresh   # rebuilds and packs the plugin, then unpacks it into node_modules
 bun run ios              # or: bun run android
 ```
 
@@ -251,12 +251,14 @@ bun run typecheck
 bun run build      # rozenite build → dist/
 ```
 
+`dist/` isn't committed: a `prepack` hook builds it, so `npm pack` and `npm publish` always ship a fresh build, and `prepublishOnly` runs the type check and tests before a publish.
+
 `bun run dev` runs a **Simulate an app** flow (see `rozenite.config.ts`). It answers the panel like the real device hook, so you can work on the UI without a simulator.
 
 ### Verifying the production no-op
 
 - `src/__tests__/react-native-entry.test.ts` checks that a production import never requires the implementation, and that the stubs survive bad calls.
-- `bun run verify:prod` exports the example app's production iOS and Android bundles and greps them for strings that only exist in the plugin's implementation (`scripts/verify-production-bundle.mjs`). None may appear. A development export, used as a control, must contain all of them.
+- `bun run verify:prod` rebuilds, packs and reinstalls the plugin into the example app, and checks that the installed `dist/` matches the fresh build byte for byte. It then exports the example's production iOS and Android bundles and greps them for strings that only exist in the plugin's implementation (`scripts/verify-production-bundle.mjs`). None may appear. A development export, used as a control, must contain all of them.
 
 ## License
 
