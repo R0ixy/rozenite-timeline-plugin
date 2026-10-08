@@ -53,17 +53,22 @@ describe('timeline protocol (device hook <-> panel client)', () => {
       ['analytics', 'EVENT'],
       ['auth', 'RESTORE'],
     ]);
-    expect(events[1].payload).toEqual({ userId: 'u1' });
+    expect(events[1].payloadJson).toBe('{"userId":"u1"}');
 
-    const batch = waitForMessage(panelClient, 'events', TIMEOUT);
+    // Each event goes out on its own, in the log() call.
+    const received: string[] = [];
+    const subscription = panelClient.onMessage('events', ({ events: batch }) =>
+      batch.forEach((event) => received.push(event.payloadJson ?? '')),
+    );
+    const second = waitForMessage(panelClient, 'events', TIMEOUT, ({ events: batch }) =>
+      batch.some((event) => event.payloadJson?.includes('gamma') ?? false),
+    );
     timeline.log({ channel: 'flags', name: 'EVALUATE', payload: { key: 'beta', value: true } });
     timeline.log({ channel: 'flags', name: 'EVALUATE', payload: { key: 'gamma', value: false } });
+    await second;
+    subscription.remove();
 
-    // A burst arrives as one batch.
-    expect((await batch).events.map((event) => event.payload)).toEqual([
-      { key: 'beta', value: true },
-      { key: 'gamma', value: false },
-    ]);
+    expect(received).toEqual(['{"key":"beta","value":true}', '{"key":"gamma","value":false}']);
 
     panelClient.close();
   });

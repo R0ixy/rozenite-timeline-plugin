@@ -295,3 +295,106 @@ export const safeSerialize = (value: unknown, options: SerializeOptions = {}): S
     return { value: `[Unserializable: ${describeThrown(error)}]`, truncated: true };
   }
 };
+
+export type SerializeToJsonResult = {
+  /** JSON text of the serialized value. */
+  json: string;
+  truncated: boolean;
+};
+
+/**
+ * True when native `JSON.stringify` would encode `root` losslessly and within
+ * the limits: only plain objects, arrays, strings, finite numbers, booleans
+ * and null, no cycles, no `undefined` holes. Allocates nothing, so it is far
+ * cheaper than `safeSerialize`'s copying walk on an interpreter like Hermes.
+ */
+const isPlainJson = (root: unknown, limits: Required<SerializeOptions>): boolean => {
+  let budget = limits.maxBytes;
+  const ancestors: object[] = [];
+
+  const visit = (value: unknown, depth: number): boolean => {
+    switch (typeof value) {
+      case 'string':
+        budget -= value.length + 2;
+        return value.length <= limits.maxStringLength && budget >= 0;
+      case 'number':
+        budget -= 8;
+        return Number.isFinite(value) && budget >= 0;
+      case 'boolean':
+        budget -= 5;
+        return budget >= 0;
+      case 'object':
+        break;
+      default:
+        return false;
+    }
+    if (value === null) {
+      budget -= 4;
+      return budget >= 0;
+    }
+    if (depth >= limits.maxDepth || ancestors.includes(value)) {
+      return false;
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length > limits.maxEntries) {
+        return false;
+      }
+      ancestors.push(value);
+      budget -= 2;
+      for (let index = 0; index < value.length; index += 1) {
+        if (!visit(value[index], depth + 1)) {
+          return false;
+        }
+      }
+      ancestors.pop();
+      return true;
+    }
+
+    // Class instances (Date, Map, Error, …) need the full serializer.
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      return false;
+    }
+    ancestors.push(value);
+    budget -= 2;
+    let entries = 0;
+    for (const key in value) {
+      entries += 1;
+      const entry = (value as Record<string, unknown>)[key];
+      budget -= key.length + 3;
+      if (entries > limits.maxEntries || entry === undefined || !visit(entry, depth + 1)) {
+        return false;
+      }
+    }
+    ancestors.pop();
+    return true;
+  };
+
+  return visit(root, 0);
+};
+
+/**
+ * Serializes straight to JSON text. Plain JSON data takes the fast path
+ * (a cheap check, then native `JSON.stringify`); anything else goes through
+ * `safeSerialize`. Never throws.
+ */
+export const serializeToJson = (
+  value: unknown,
+  options: SerializeOptions = {},
+): SerializeToJsonResult => {
+  const limits = { ...DEFAULT_SERIALIZE_OPTIONS, ...options };
+  try {
+    if (isPlainJson(value, limits)) {
+      return { json: JSON.stringify(value), truncated: false };
+    }
+  } catch {
+    // A throwing getter or proxy trap: let the careful path describe it.
+  }
+  const { value: safe, truncated } = safeSerialize(value, options);
+  try {
+    return { json: JSON.stringify(safe), truncated };
+  } catch (error) {
+    return { json: JSON.stringify(`[Unserializable: ${describeThrown(error)}]`), truncated: true };
+  }
+};

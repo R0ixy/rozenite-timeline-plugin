@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  serializeToJson,
   CIRCULAR_MARKER,
   MAX_DEPTH_MARKER,
   safeSerialize,
@@ -168,5 +169,60 @@ describe('safeSerialize', () => {
     const { value } = safeSerialize(cyclic);
 
     expect(JSON.parse(JSON.stringify(value))).toEqual(value);
+  });
+});
+
+describe('serializeToJson', () => {
+  const viaSafeSerialize = (value: unknown) => JSON.stringify(safeSerialize(value).value);
+
+  it('encodes plain JSON exactly like the careful path', () => {
+    const plain = { a: 1, b: 'two', c: [true, null, { d: 3.5, e: [] }], f: {} };
+
+    expect(serializeToJson(plain)).toEqual({ json: viaSafeSerialize(plain), truncated: false });
+    expect(serializeToJson('text')).toEqual({ json: '"text"', truncated: false });
+    expect(serializeToJson(null)).toEqual({ json: 'null', truncated: false });
+  });
+
+  it('falls back to the careful path for anything native JSON would get wrong', () => {
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    const cases: unknown[] = [
+      cyclic,
+      { error: new Error('boom') },
+      { when: new Date(0) },
+      { map: new Map([['k', 1]]) },
+      { set: new Set([1]) },
+      { big: 10n },
+      { fn: () => {} },
+      { missing: undefined, kept: 1 },
+      { nan: Number.NaN },
+      [1, undefined, 3],
+      { custom: { toJSON: () => 'custom' } },
+      new (class Point {
+        x = 1;
+      })(),
+    ];
+
+    for (const value of cases) {
+      expect(serializeToJson(value).json).toBe(viaSafeSerialize(value));
+    }
+  });
+
+  it('applies the size limits and reports truncation', () => {
+    const { json, truncated } = serializeToJson({ blob: 'z'.repeat(50_000) }, { maxStringLength: 100 });
+
+    expect(truncated).toBe(true);
+    expect(json).toContain('[truncated 49900 chars]');
+  });
+
+  it('survives a throwing getter on a plain object', () => {
+    const hostile = Object.defineProperty({ ok: 1 }, 'boom', {
+      enumerable: true,
+      get: () => {
+        throw new Error('nope');
+      },
+    });
+
+    expect(JSON.parse(serializeToJson(hostile).json)).toEqual({ ok: 1, boom: '[Throws: nope]' });
   });
 });

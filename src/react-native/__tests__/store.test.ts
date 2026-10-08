@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { safeSerialize } from '../../shared/serialize';
+import { serializeToJson } from '../../shared/serialize';
 import type { TimelineEvent } from '../../shared/types';
 import { createTimelineStore, type TimelineSink } from '../store';
 
@@ -77,7 +77,7 @@ describe('timeline store', () => {
   });
 
   it('only pushes to the ring buffer while no panel is attached', () => {
-    const serialize = vi.fn(safeSerialize);
+    const serialize = vi.fn(serializeToJson);
     const store = createTimelineStore({ maxEvents: 3, serialize });
 
     for (let index = 0; index < 5; index += 1) {
@@ -88,43 +88,44 @@ describe('timeline store', () => {
     // Nothing serialized, nothing scheduled: the payloads are only referenced.
     expect(serialize).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+    expect(store.getEvents()[0].payloadJson).toBe('{"index":2}');
     expect(store.size).toBe(3);
   });
 
-  it('returns the buffered events on attach and then streams batches', () => {
-    const store = createTimelineStore({ maxEvents: 3, batchIntervalMs: 50 });
+  it('returns the buffered events on attach and then sends each event synchronously', () => {
+    const store = createTimelineStore({ maxEvents: 3 });
     ['a', 'b', 'c', 'd'].forEach((name) => store.log({ channel: 'c', name, payload: { name } }));
 
     const { sink, batches } = createSink();
     const snapshot = store.attach(sink);
 
     expect(snapshot.map((event) => event.name)).toEqual(['b', 'c', 'd']);
-    expect(snapshot[0].payload).toEqual({ name: 'b' });
+    expect(snapshot[0].payloadJson).toBe('{"name":"b"}');
 
-    store.log({ channel: 'c', name: 'e' });
+    // No timer between log() and the sink: each event goes out in the call.
+    store.log({ channel: 'c', name: 'e', payload: { n: 1 } });
+    expect(batches.map((batch) => batch.map((event) => event.name))).toEqual([['e']]);
     store.log({ channel: 'c', name: 'f' });
-    expect(batches).toHaveLength(0);
-
-    vi.advanceTimersByTime(50);
-    expect(batches.map((batch) => batch.map((event) => event.name))).toEqual([['e', 'f']]);
+    expect(batches.map((batch) => batch.map((event) => event.name))).toEqual([['e'], ['f']]);
+    expect(batches[0][0].payloadJson).toBe('{"n":1}');
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('sends a burst in one batch, flushing early when the batch is full', () => {
-    const store = createTimelineStore({ batchIntervalMs: 50, maxBatchSize: 100 });
+  it('snapshots the payload at log time while a panel is attached', () => {
+    const store = createTimelineStore();
     const { sink, batches } = createSink();
     store.attach(sink);
+    const payload = { count: 1 };
 
-    for (let index = 0; index < 250; index += 1) {
-      store.log({ channel: 'burst', name: 'E' });
-    }
-    expect(batches.map((batch) => batch.length)).toEqual([100, 100]);
+    store.log({ channel: 'c', name: 'E', payload });
+    payload.count = 2;
 
-    vi.advanceTimersByTime(50);
-    expect(batches.map((batch) => batch.length)).toEqual([100, 100, 50]);
+    expect(batches[0][0].payloadJson).toBe('{"count":1}');
+    expect(store.getEvents()[0].payloadJson).toBe('{"count":1}');
   });
 
   it('serializes each payload once, at send time, and lets go of the original', () => {
-    const serialize = vi.fn(safeSerialize);
+    const serialize = vi.fn(serializeToJson);
     const store = createTimelineStore({ serialize });
     const payload = { nested: { value: 1 } };
     store.log({ channel: 'c', name: 'E', payload });
@@ -150,9 +151,8 @@ describe('timeline store', () => {
     store.log({ channel: 'c', name: 'a' });
     store.detach(first.sink);
     store.log({ channel: 'c', name: 'b' });
-    vi.runAllTimers();
 
-    expect(first.batches).toEqual([]);
+    expect(first.batches.map((batch) => batch[0].name)).toEqual(['a']);
 
     const second = createSink();
     expect(store.attach(second.sink).map((event) => event.name)).toEqual(['a', 'b']);
@@ -171,23 +171,21 @@ describe('timeline store', () => {
 
   it('clears the buffer and notifies the panel', () => {
     const store = createTimelineStore();
-    const { sink, batches } = createSink();
+    const { sink } = createSink();
     store.attach(sink);
     store.log({ channel: 'c', name: 'a' });
 
     expect(store.clear()).toBe(1);
-    vi.runAllTimers();
 
     expect(store.getEvents()).toEqual([]);
     expect(sink.cleared).toBe(1);
-    // The pending batch was dropped along with the buffer.
-    expect(batches).toEqual([]);
   });
 
   it('finds events by id', () => {
     const store = createTimelineStore();
     store.log({ channel: 'c', name: 'a', payload: [1] });
     const [event] = store.getEvents();
+    expect(event.payloadJson).toBe('[1]');
 
     expect(store.getEvent(event.id)).toEqual(event);
     expect(store.getEvent('missing')).toBeUndefined();

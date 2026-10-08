@@ -1,5 +1,7 @@
 import { Badge, Button, IconButton, JsonInspector, useCopyToClipboard, X } from '@rozenite/ui';
 import { Check, Copy } from 'lucide-react';
+import { useMemo } from 'react';
+import { parsePayload, withParsedPayload } from '../shared/payload';
 import type { TimelineEvent } from '../shared/types';
 import { channelTone, formatTime, LEVEL_STYLE, toPrettyJson } from './format';
 
@@ -18,7 +20,9 @@ const MetaRow = ({ label, children }: { label: string; children: React.ReactNode
 export function EventDetail({ event, onClose }: EventDetailProps) {
   const payloadCopy = useCopyToClipboard();
   const eventCopy = useCopyToClipboard();
-  const hasPayload = event.payload !== undefined;
+  // Payloads travel as JSON text; parse only the one being looked at.
+  const payload = useMemo(() => parsePayload(event), [event]);
+  const hasPayload = payload !== undefined;
 
   return (
     <section aria-label="Event details" className="flex h-full min-h-0 flex-col bg-background">
@@ -90,7 +94,7 @@ export function EventDetail({ event, onClose }: EventDetailProps) {
               tone="neutral"
               variant="ghost"
               disabled={!hasPayload}
-              onClick={() => void payloadCopy.copy(toPrettyJson(event.payload))}
+              onClick={() => void payloadCopy.copy(toPrettyJson(payload))}
             >
               {payloadCopy.copied ? <Check /> : <Copy />}
               Copy payload
@@ -99,7 +103,7 @@ export function EventDetail({ event, onClose }: EventDetailProps) {
               size="sm"
               tone="neutral"
               variant="ghost"
-              onClick={() => void eventCopy.copy(toPrettyJson(event))}
+              onClick={() => void eventCopy.copy(toPrettyJson(withParsedPayload(event)))}
             >
               {eventCopy.copied ? <Check /> : <Copy />}
               Copy event
@@ -109,7 +113,7 @@ export function EventDetail({ event, onClose }: EventDetailProps) {
 
         {hasPayload ? (
           <div className="rounded-md border border-border bg-card p-2">
-            <JsonInspector data={event.payload} defaultExpandedDepth={2} />
+            <JsonInspector data={payload} defaultExpandedDepth={2} />
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">No payload.</p>

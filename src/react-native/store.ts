@@ -1,4 +1,4 @@
-import { safeSerialize, type SerializeOptions } from '../shared/serialize';
+import { serializeToJson, type SerializeOptions } from '../shared/serialize';
 import {
   isTimelineLevel,
   type TimelineEvent,
@@ -7,8 +7,6 @@ import {
 import { RingBuffer } from './ring-buffer';
 
 export const DEFAULT_MAX_EVENTS = 1000;
-const DEFAULT_BATCH_INTERVAL_MS = 50;
-const DEFAULT_MAX_BATCH_SIZE = 250;
 const MAX_PREVIEW_LENGTH = 1000;
 
 /** Receives events while a panel is listening. */
@@ -19,14 +17,10 @@ export type TimelineSink = {
 
 export type TimelineStoreOptions = {
   maxEvents?: number;
-  /** How long to wait for more events before sending a batch. */
-  batchIntervalMs?: number;
-  /** A batch this large is sent right away. */
-  maxBatchSize?: number;
   serializeOptions?: SerializeOptions;
   now?: () => number;
   /** Injection seam for tests. */
-  serialize?: typeof safeSerialize;
+  serialize?: typeof serializeToJson;
 };
 
 type Entry = {
@@ -69,31 +63,31 @@ const normalizePreview = (preview: unknown): string | undefined => {
 };
 
 /**
- * The device-side event buffer. While no panel is attached, `log()` only
- * builds a small metadata object and pushes it onto the ring buffer; the
- * payload is kept by reference and serialized when (and if) something asks
- * for it — a panel connecting, or an agent tool call.
+ * The device-side event buffer.
+ *
+ * While a panel is attached, `log()` serializes the event and hands it to the
+ * sink synchronously — like the Redux DevTools plugin, there is no batching
+ * timer between the call and the bridge. While no panel is attached, `log()`
+ * only pushes onto the ring buffer; the payload is kept by reference and
+ * serialized when (and if) something asks for it — a panel connecting, or an
+ * agent tool call.
  */
 export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
-  const batchIntervalMs = options.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS;
-  const maxBatchSize = options.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
   const now = options.now ?? Date.now;
   const serializeOptions = options.serializeOptions;
-  const serialize = options.serialize ?? safeSerialize;
+  const serialize = options.serialize ?? serializeToJson;
   const sessionPrefix = createSessionPrefix();
 
   const buffer = new RingBuffer<Entry>(options.maxEvents ?? DEFAULT_MAX_EVENTS);
   let seq = 0;
   let sink: TimelineSink | null = null;
-  let pending: Entry[] = [];
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   const materialize = (entry: Entry): TimelineEvent => {
     if (!entry.serialized) {
       entry.serialized = true;
       if (entry.hasPayload) {
-        const { value, truncated } = serialize(entry.raw, serializeOptions);
-        entry.event.payload = value;
+        const { json, truncated } = serialize(entry.raw, serializeOptions);
+        entry.event.payloadJson = json;
         if (truncated) {
           entry.event.truncated = true;
         }
@@ -102,24 +96,6 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
       entry.raw = undefined;
     }
     return entry.event;
-  };
-
-  const cancelFlush = () => {
-    if (flushTimer !== null) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-  };
-
-  const flush = () => {
-    cancelFlush();
-    if (pending.length === 0 || sink === null) {
-      pending = [];
-      return;
-    }
-    const batch = pending;
-    pending = [];
-    sink.onEvents(batch.map(materialize));
   };
 
   const log = (input: TimelineEventInput) => {
@@ -149,21 +125,11 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     };
     buffer.push(entry);
 
-    if (sink === null) {
-      return;
-    }
-
-    pending.push(entry);
-    if (pending.length >= maxBatchSize) {
-      flush();
-    } else if (flushTimer === null) {
-      flushTimer = setTimeout(flush, batchIntervalMs);
-    }
+    sink?.onEvents([materialize(entry)]);
   };
 
   return {
     log,
-    flush,
 
     /** Every buffered event, oldest first, with payloads serialized. */
     getEvents: (): TimelineEvent[] => buffer.toArray().map(materialize),
@@ -189,8 +155,6 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     clear: (): number => {
       const cleared = buffer.size;
       buffer.clear();
-      pending = [];
-      cancelFlush();
       sink?.onCleared();
       return cleared;
     },
@@ -198,11 +162,9 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     /**
      * Starts streaming to `nextSink`. Returns the current buffer, so the
      * caller can send it as the initial snapshot; anything logged afterwards
-     * reaches the sink in batches.
+     * reaches the sink as it is logged.
      */
     attach: (nextSink: TimelineSink): TimelineEvent[] => {
-      cancelFlush();
-      pending = [];
       sink = nextSink;
       return buffer.toArray().map(materialize);
     },
@@ -212,8 +174,6 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
         return;
       }
       sink = null;
-      pending = [];
-      cancelFlush();
     },
 
     get isAttached() {

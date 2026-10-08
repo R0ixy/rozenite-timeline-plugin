@@ -1,4 +1,5 @@
 import type { Tone } from '@rozenite/ui';
+import { withParsedPayload } from '../shared/payload';
 import type { TimelineEvent, TimelineLevel } from '../shared/types';
 
 const pad = (value: number, length = 2) => String(value).padStart(length, '0');
@@ -46,7 +47,7 @@ export const buildExport = (events: TimelineEvent[], filters: Record<string, unk
     exportedAt: new Date().toISOString(),
     filters,
     count: events.length,
-    events,
+    events: events.map(withParsedPayload),
   });
 
 /** Triggers a file download. Returns false when the host blocks it. */

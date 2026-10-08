@@ -42,8 +42,13 @@ export type TimelineEvent = {
   channel: string;
   name: string;
   preview?: string;
-  /** Serialized payload. Absent when no payload was logged. */
-  payload?: JsonValue;
+  /**
+   * The payload as JSON text, serialized once in the app. Kept as a string
+   * on the wire (like the Redux DevTools plugin) so the bridge and the panel
+   * never copy a deep object tree; the panel parses it only when shown.
+   * Absent when no payload was logged.
+   */
+  payloadJson?: string;
   level: TimelineLevel;
   important: boolean;
   tags: string[];

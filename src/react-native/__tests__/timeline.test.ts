@@ -22,7 +22,7 @@ describe('timeline (public API)', () => {
 
     expect(analytics.channel).toBe('analytics');
     expect(getTimelineStore().getEvents()).toEqual([
-      expect.objectContaining({ channel: 'analytics', name: 'SCREEN', payload: { tab: 'feed' } }),
+      expect.objectContaining({ channel: 'analytics', name: 'SCREEN', payloadJson: '{"tab":"feed"}' }),
       expect.objectContaining({ channel: 'analytics', name: 'EVENT' }),
     ]);
   });

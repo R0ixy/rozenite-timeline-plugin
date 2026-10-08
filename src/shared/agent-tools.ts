@@ -1,6 +1,7 @@
 import type { AgentTool, PageEnvelope } from '@rozenite/agent-bridge';
 import type { ChannelSummary } from './filters';
-import { TIMELINE_LEVELS, type TimelineEvent, type TimelineLevel } from './types';
+import type { TimelineEventWithPayload } from './payload';
+import { TIMELINE_LEVELS, type TimelineLevel } from './types';
 
 export type TimelineListEventsArgs = {
   channel?: string | string[];
@@ -15,12 +16,12 @@ export type TimelineListEventsArgs = {
 };
 
 export type TimelineListEventsResult = {
-  items: TimelineEvent[];
+  items: TimelineEventWithPayload[];
   page: PageEnvelope;
 };
 
 export type TimelineGetEventArgs = { id: string };
-export type TimelineGetEventResult = { event: TimelineEvent };
+export type TimelineGetEventResult = { event: TimelineEventWithPayload };
 
 export type TimelineListChannelsArgs = Record<string, never>;
 export type TimelineListChannelsResult = { channels: ChannelSummary[]; totalEvents: number };

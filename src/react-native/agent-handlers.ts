@@ -6,6 +6,7 @@ import type {
   TimelineListEventsResult,
 } from '../shared/agent-tools';
 import { createEventPredicate, summarizeChannels } from '../shared/filters';
+import { withParsedPayload } from '../shared/payload';
 import { isTimelineLevel, type TimelineEvent } from '../shared/types';
 import type { TimelineStore } from './store';
 
@@ -75,7 +76,7 @@ export const createTimelineAgentHandlers = (getStore: () => TimelineStore) => ({
 
     const last = items[items.length - 1];
     return {
-      items,
+      items: items.map(withParsedPayload),
       page: {
         limit,
         hasMore,
@@ -89,7 +90,7 @@ export const createTimelineAgentHandlers = (getStore: () => TimelineStore) => ({
     if (!event) {
       throw new Error(`Timeline event "${id}" not found. It may have been evicted or cleared.`);
     }
-    return { event };
+    return { event: withParsedPayload(event) };
   },
 
   listChannels: (): TimelineListChannelsResult => {

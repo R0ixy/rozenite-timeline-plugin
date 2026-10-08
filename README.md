@@ -110,7 +110,7 @@ Empties the buffer in the app and in an open panel.
 
 **Buffering.** Events go into a ring buffer of `maxEvents` entries from the moment the module loads. When a panel connects, or reloads, it gets the whole buffer, then a live stream.
 
-**Overhead.** While no panel is listening, `log()` only pushes onto the ring buffer. Payloads are serialized lazily, the first time a panel or agent tool asks for them, and bursts are sent in batches. Because of this, an object you mutate after logging may show its later state if the panel was closed at the time; log a copy if that matters.
+**Overhead.** While the panel is open, `log()` serializes the event and sends it synchronously, inside the call — like the Redux DevTools plugin, there is no batching delay. Plain JSON payloads take a fast path (a cheap check, then native `JSON.stringify`), and the payload travels as a JSON string that the panel parses only when you open the event. While no panel is listening, `log()` only pushes onto the ring buffer and payloads are serialized later, when a panel or agent tool first asks for them; an object you mutate after logging in that state may show its later value, so log a copy if that matters.
 
 **Serialization.** Payloads become plain JSON: cycles become `"[Circular]"`, `Error`s become `{ name, message, stack, cause? }`, and `Date`, `Map`/`Set`, BigInt, functions and throwing getters all get readable stand-ins. Each payload is capped at 64 KiB (plus limits on string length, entries and depth). Anything cut is marked `[Truncated]` and the panel shows a "truncated" badge.
 

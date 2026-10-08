@@ -16,7 +16,7 @@ type DevFlowContext = {
 /** A fake app for `rozenite dev`: answers the panel like the device hook does. */
 const simulateApp = async ({ send, onMessage, signal }: DevFlowContext) => {
   let seq = 0;
-  const event = (fields: Partial<TimelineEvent>): TimelineEvent => ({
+  const event = ({ payload, ...fields }: Partial<TimelineEvent> & { payload?: unknown }): TimelineEvent => ({
     id: `dev-${++seq}`,
     seq,
     timestamp: Date.now(),
@@ -26,6 +26,7 @@ const simulateApp = async ({ send, onMessage, signal }: DevFlowContext) => {
     important: false,
     tags: [],
     ...fields,
+    ...(payload === undefined ? {} : { payloadJson: JSON.stringify(payload) }),
   });
 
   const events = [

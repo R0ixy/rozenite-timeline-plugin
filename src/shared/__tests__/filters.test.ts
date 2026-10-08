@@ -25,7 +25,7 @@ const events = [
     channel: 'flags',
     name: 'EVALUATE',
     preview: 'new-onboarding',
-    payload: { value: true, source: 'remote' },
+    payloadJson: JSON.stringify({ value: true, source: 'remote' }),
     level: 'debug',
     timestamp: 3000,
   }),

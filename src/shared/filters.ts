@@ -11,18 +11,14 @@ export type TimelineFilter = {
   since?: number;
 };
 
-// Payload text is computed at most once per event object, so typing in the
-// search box doesn't re-stringify every payload on every keystroke.
+// Payloads already arrive as JSON text; lower-case it at most once per event
+// so typing in the search box stays cheap.
 const payloadTextCache = new WeakMap<TimelineEvent, string>();
 
 const getPayloadText = (event: TimelineEvent): string => {
   let text = payloadTextCache.get(event);
   if (text === undefined) {
-    try {
-      text = event.payload === undefined ? '' : JSON.stringify(event.payload).toLowerCase();
-    } catch {
-      text = '';
-    }
+    text = event.payloadJson?.toLowerCase() ?? '';
     payloadTextCache.set(event, text);
   }
   return text;
