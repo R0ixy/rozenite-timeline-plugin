@@ -191,18 +191,24 @@ function TimelinePanelContent() {
       />
     );
 
-    body = selected ? (
+    // One Split, with the list always its first pane: selecting a row only
+    // adds the detail pane next to it. Swapping between a bare list and a
+    // Split would move the list in the tree, so React would remount it,
+    // losing its scroll position and re-measuring every row (a visible flicker).
+    body = (
       <Split direction="horizontal" autoSaveId="rozenite-timeline">
-        <Split.Pane defaultSize={60} minSize={25}>
+        <Split.Pane id="timeline-list" minSize={25}>
           {list}
         </Split.Pane>
-        <Split.Handle />
-        <Split.Pane defaultSize={40} minSize={20}>
-          <EventDetail event={selected} onClose={() => setSelectedId(null)} />
-        </Split.Pane>
+        {selected && (
+          <>
+            <Split.Handle id="timeline-detail-handle" />
+            <Split.Pane id="timeline-detail" defaultSize={40} minSize={20}>
+              <EventDetail event={selected} onClose={() => setSelectedId(null)} />
+            </Split.Pane>
+          </>
+        )}
       </Split>
-    ) : (
-      list
     );
   }
 

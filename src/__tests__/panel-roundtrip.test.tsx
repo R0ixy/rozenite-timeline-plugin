@@ -91,6 +91,25 @@ describe('panel <-> app round trip', () => {
     expect(getTimelineStore().size).toBe(0);
   });
 
+  it('keeps the same list mounted while the detail pane opens, switches and closes', async () => {
+    ['first', 'second', 'third'].forEach((preview) => timeline.log({ channel: 'c', name: 'EVENT', preview }));
+    renderPair();
+    await screen.findByText('third');
+    const list = screen.getByTestId('virtuoso-mock');
+
+    fireEvent.click(screen.getByText('second'));
+    await screen.findByRole('region', { name: 'Event details' });
+    expect(screen.getByTestId('virtuoso-mock')).toBe(list);
+
+    fireEvent.click(screen.getByText('first'));
+    expect(screen.getByTestId('virtuoso-mock')).toBe(list);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    expect(screen.queryByRole('region', { name: 'Event details' })).toBeNull();
+    // Remounting would replace the list element (and, in a browser, its scroll position).
+    expect(screen.getByTestId('virtuoso-mock')).toBe(list);
+  });
+
   it('shows the waiting state while no app answers', async () => {
     const { panel } = connectFakePair();
 
