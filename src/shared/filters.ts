@@ -5,6 +5,10 @@ export type TimelineFilter = {
   channels?: readonly string[];
   /** Keep only these levels. Empty or absent means every level. */
   levels?: readonly TimelineLevel[];
+  /** Keep only events with exactly one of these names. Empty or absent means every name. */
+  names?: readonly string[];
+  /** Keep only events logged after this sequence number (exclusive). */
+  afterSeq?: number;
   /** Case-insensitive substring over name, preview, tags and payload. */
   search?: string;
   /** Keep only events with `timestamp >= since` (ms since the epoch). */
@@ -41,12 +45,16 @@ export const matchesSearch = (event: TimelineEvent, search: string): boolean => 
 export const createEventPredicate = (filter: TimelineFilter) => {
   const channels = filter.channels?.length ? new Set(filter.channels) : null;
   const levels = filter.levels?.length ? new Set(filter.levels) : null;
+  const names = filter.names?.length ? new Set(filter.names) : null;
+  const afterSeq = filter.afterSeq;
   const search = filter.search?.trim() ?? '';
   const since = filter.since;
 
   return (event: TimelineEvent): boolean =>
     (channels === null || channels.has(event.channel)) &&
     (levels === null || levels.has(event.level)) &&
+    (names === null || names.has(event.name)) &&
+    (afterSeq === undefined || event.seq > afterSeq) &&
     (since === undefined || event.timestamp >= since) &&
     (search === '' || matchesSearch(event, search));
 };

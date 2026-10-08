@@ -31,7 +31,7 @@ timeline.log({ channel: 'analytics', name: 'EVENT', preview: 'checkout_started',
 - **Safe payloads**: cycles, `Error`s, `Date`, `Map`/`Set`, BigInt, functions and throwing getters are all serialized defensively, and payloads are capped at 64 KiB. A call can never throw into your app.
 - **Zero cost when nobody is looking**: with no panel open (or the panel paused), `log()` only pushes onto the ring buffer.
 - **Production-safe**: every export is a no-op stub in production builds, and the implementation is never bundled.
-- **Agent tools**: coding agents can list, read and clear events through [Rozenite for Agents](https://www.rozenite.dev/docs/agent/overview), even with the panel closed.
+- **Agent tools**: coding agents can list, read, wait for and clear events through [Rozenite for Agents](https://www.rozenite.dev/docs/agent/overview), even with the panel closed. Ideal for checking that an action in the app logged what it should.
 
 ## Prerequisites
 
@@ -247,16 +247,32 @@ The same pattern works for Zustand (`subscribe`), MobX (`spy`) or any event emit
 
 ## Agent tools
 
-The plugin registers tools under the `rozenite-timeline-plugin` domain for [Rozenite for Agents](https://www.rozenite.dev/docs/agent/overview). They're available while `useRozeniteTimelinePlugin` is mounted, even with the panel closed.
+The plugin registers tools under the `rozenite-timeline-plugin` domain for [Rozenite for Agents](https://www.rozenite.dev/docs/agent/overview), so coding agents (Claude Code, Cursor, Codex…) can read the timeline and check what your app did. The tools are available while `useRozeniteTimelinePlugin` is mounted, even with the panel closed.
 
-| Tool            | Arguments | Returns |
-| --------------- | --------- | ------- |
-| `list-events`   | `channel?` (string or string[]), `level?` (string or string[]), `search?`, `since?` (ms epoch), `limit?` (default 50, max 500), `cursor?`, `order?` (`'desc'`, newest first, by default; or `'asc'`) | `{ items, page: { limit, hasMore, nextCursor? } }`. Payloads are left out unless you request the `payload` field. |
-| `get-event`     | `id` | `{ event }`, including its payload |
-| `list-channels` | none | `{ channels: [{ channel, count, lastTimestamp }], totalEvents }` |
-| `clear`         | none | `{ cleared }`. Destructive: it also clears the panel. |
+| Tool             | Arguments | Returns |
+| ---------------- | --------- | ------- |
+| `list-events`    | filters (below), `since?` (ms epoch), `limit?` (default 50, max 500), `cursor?`, `order?` (`'desc'`, newest first, by default; or `'asc'`) | `{ items, page: { limit, hasMore, nextCursor? }, latestSeq }`. Payloads are left out unless you request the `payload` field. |
+| `wait-for-event` | filters (below), `timeoutMs?` (default 10 000, max 25 000) | `{ event, timedOut, latestSeq }`: the first matching event, with its payload, or `event: null` on timeout |
+| `get-event`      | `id` | `{ event }`, including its payload |
+| `list-channels`  | none | `{ channels: [{ channel, count, lastTimestamp }], totalEvents }` |
+| `clear`          | none | `{ cleared }`. Destructive: it also clears the panel. |
 
-Cursors are anchored to sequence numbers, so pages stay consistent while new events arrive.
+**Filters** shared by `list-events` and `wait-for-event`:
+- `channel?`, `name?` and `level?`: a string or an array of strings; `name` is an exact match.
+- `search?`: a case-insensitive substring of the name, preview, channel, tags or payload.
+- `afterSeq?`: only events logged after this sequence number.
+
+**Checking what an action did.** Every event has a monotonic `seq`, and `list-events` and `wait-for-event` both return the `latestSeq` so far. The usual agent loop:
+
+1. Call `list-events` with `limit: 1` and note `latestSeq`.
+2. Trigger the action in the app: a tap, a navigation, a request.
+3. Either:
+   - call `list-events` with `afterSeq` set to that value, to see exactly what the action logged; or
+   - call `wait-for-event` (for example `{ "channel": "payments", "name": "PAYMENT_FAILED" }`) to block until the expected event shows up.
+
+Prefer `afterSeq` over `since`: it doesn't depend on the device clock.
+
+Cursors are anchored to sequence numbers too, so pages stay consistent while new events arrive.
 
 From the CLI, with Metro running:
 
@@ -265,28 +281,12 @@ npx rozenite agent session create
 ```
 
 ```bash
-npx rozenite agent rozenite-timeline-plugin call --session <id> --tool list-events --args '{"channel":"analytics","limit":20}' --fields id,timestamp,name,preview,payload
+npx rozenite agent rozenite-timeline-plugin call --session <id> --tool list-events --args '{"channel":"analytics","limit":20}' --fields id,seq,timestamp,name,preview,payload
 ```
 
-From code, the `rozenite-timeline-plugin/sdk` entry point exports typed descriptors for [`@rozenite/agent-sdk`](https://www.npmjs.com/package/@rozenite/agent-sdk):
-
-```ts
-import { createAgentClient } from '@rozenite/agent-sdk';
-import { timelineTools } from 'rozenite-timeline-plugin/sdk';
-
-const client = createAgentClient();
-
-await client.withSession(async (session) => {
-  const { items, page } = await session.tools.call(timelineTools.listEvents, {
-    channel: 'analytics',
-    level: ['warn', 'error'],
-    limit: 20,
-  });
-  const { channels } = await session.tools.call(timelineTools.listChannels, {});
-});
+```bash
+npx rozenite agent rozenite-timeline-plugin call --session <id> --tool wait-for-event --args '{"name":"order_completed","timeoutMs":15000}'
 ```
-
-Arguments and results are typed. The entry point also exports the argument and result types (`TimelineListEventsArgs`, `TimelineListEventsResult` and so on), along with `TimelineEventWithPayload`, `ChannelSummary` and `TIMELINE_PLUGIN_ID`.
 
 ## How it works
 
@@ -296,7 +296,7 @@ The plugin has two halves that talk over Rozenite's plugin bridge.
 
 - `timeline.log()` pushes each event onto a ring buffer of `maxEvents` entries, from the moment the module loads.
 - `useRozeniteTimelinePlugin()` connects the buffer to DevTools. When a panel says `hello`, the app replays the buffer in chunks (up to 100 events or 256 KB each), yielding between chunks so a full buffer never blocks the JS thread for long. After that, every new event is serialized and sent synchronously, inside the `log()` call.
-- With no panel attached (or the panel paused), `log()` only pushes onto the buffer. Payloads are kept by reference and serialized later, when a panel or agent tool first asks for them.
+- With no panel attached (or the panel paused), `log()` only pushes onto the buffer. Payloads are kept by reference and serialized later, when a panel or agent tool first asks for them. The exception is while an agent's `wait-for-event` call is pending: each new event is serialized so it can be matched.
 - If the panel disappears without saying goodbye (window killed, laptop asleep), the app stops streaming once the panel's 30-second lease runs out.
 
 ### Panel side

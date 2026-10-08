@@ -4,6 +4,8 @@ import type {
   TimelineGetEventResult,
   TimelineListEventsArgs,
   TimelineListEventsResult,
+  TimelineWaitForEventArgs,
+  TimelineWaitForEventResult,
 } from '../shared/agent-tools';
 import { timelineToolDefinitions } from '../shared/agent-tools';
 import { TIMELINE_PLUGIN_ID } from '../shared/messaging';
@@ -18,6 +20,12 @@ export const useTimelineAgentTools = () => {
     pluginId: TIMELINE_PLUGIN_ID,
     tool: timelineToolDefinitions.listEvents,
     handler: handlers.listEvents,
+  });
+
+  useRozenitePluginAgentTool<TimelineWaitForEventArgs, TimelineWaitForEventResult>({
+    pluginId: TIMELINE_PLUGIN_ID,
+    tool: timelineToolDefinitions.waitForEvent,
+    handler: handlers.waitForEvent,
   });
 
   useRozenitePluginAgentTool<TimelineGetEventArgs, TimelineGetEventResult>({

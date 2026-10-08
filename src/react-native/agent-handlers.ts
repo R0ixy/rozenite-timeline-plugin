@@ -1,4 +1,7 @@
 import type {
+  TimelineEventFilterArgs,
+  TimelineWaitForEventArgs,
+  TimelineWaitForEventResult,
   TimelineClearResult,
   TimelineGetEventResult,
   TimelineListChannelsResult,
@@ -12,6 +15,9 @@ import type { TimelineStore } from './store';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
+const DEFAULT_WAIT_MS = 10_000;
+// Rozenite fails a tool call after 30 s; answer well before that.
+const MAX_WAIT_MS = 25_000;
 
 const toArray = <T>(value: T | T[] | undefined): T[] | undefined =>
   value === undefined ? undefined : Array.isArray(value) ? value : [value];
@@ -38,6 +44,21 @@ const decodeCursor = (cursor: string, order: 'asc' | 'desc'): number => {
   return seq;
 };
 
+const toPredicate = (args: TimelineEventFilterArgs, since?: number) =>
+  createEventPredicate({
+    channels: toArray(args.channel),
+    names: toArray(args.name),
+    levels: toArray(args.level)?.filter(isTimelineLevel),
+    search: args.search,
+    afterSeq: typeof args.afterSeq === 'number' ? args.afterSeq : undefined,
+    since,
+  });
+
+const normalizeWait = (timeoutMs: unknown): number =>
+  typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)
+    ? Math.min(Math.max(Math.floor(timeoutMs), 0), MAX_WAIT_MS)
+    : DEFAULT_WAIT_MS;
+
 /**
  * Agent tool handler bodies, kept apart from the React hook so they can be
  * tested against a real store.
@@ -46,13 +67,7 @@ export const createTimelineAgentHandlers = (getStore: () => TimelineStore) => ({
   listEvents: (args: TimelineListEventsArgs = {}): TimelineListEventsResult => {
     const order = args.order === 'asc' ? 'asc' : 'desc';
     const limit = normalizeLimit(args.limit);
-    const levels = toArray(args.level)?.filter(isTimelineLevel);
-    const predicate = createEventPredicate({
-      channels: toArray(args.channel),
-      levels,
-      search: args.search,
-      since: typeof args.since === 'number' ? args.since : undefined,
-    });
+    const predicate = toPredicate(args, typeof args.since === 'number' ? args.since : undefined);
 
     const boundary = args.cursor ? decodeCursor(args.cursor, order) : undefined;
     const all = getStore().getEvents();
@@ -82,7 +97,40 @@ export const createTimelineAgentHandlers = (getStore: () => TimelineStore) => ({
         hasMore,
         ...(hasMore && last ? { nextCursor: encodeCursor(order, last.seq) } : {}),
       },
+      latestSeq: getStore().latestSeq,
     };
+  },
+
+  waitForEvent: (args: TimelineWaitForEventArgs = {}): Promise<TimelineWaitForEventResult> => {
+    const store = getStore();
+    const afterSeq = typeof args.afterSeq === 'number' ? args.afterSeq : store.latestSeq;
+    const predicate = toPredicate({ ...args, afterSeq });
+    const found = (event: TimelineEvent): TimelineWaitForEventResult => ({
+      event: withParsedPayload(event),
+      timedOut: false,
+      latestSeq: store.latestSeq,
+    });
+
+    // Already logged after `afterSeq`? Return the earliest match right away.
+    const existing = store.getEvents().find(predicate);
+    if (existing) {
+      return Promise.resolve(found(existing));
+    }
+
+    return new Promise((resolve) => {
+      let unsubscribe = () => {};
+      const timer = setTimeout(() => {
+        unsubscribe();
+        resolve({ event: null, timedOut: true, latestSeq: store.latestSeq });
+      }, normalizeWait(args.timeoutMs));
+      unsubscribe = store.onLogged((event) => {
+        if (predicate(event)) {
+          clearTimeout(timer);
+          unsubscribe();
+          resolve(found(event));
+        }
+      });
+    });
   },
 
   getEvent: ({ id }: { id: string }): TimelineGetEventResult => {

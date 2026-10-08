@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { serializeToJson } from '../../shared/serialize';
 import { createTimelineAgentHandlers } from '../agent-handlers';
 import { createTimelineStore } from '../store';
 
@@ -104,4 +105,112 @@ describe('timeline agent tools', () => {
     expect(handlers.clear()).toEqual({ cleared: 3 });
     expect(handlers.listChannels()).toEqual({ totalEvents: 0, channels: [] });
   });
+
+  it('reports latestSeq and lists only what came after it', () => {
+    const { store, handlers } = setup();
+    store.log({ channel: 'c', name: 'BEFORE' });
+    const { latestSeq, items } = handlers.listEvents({ limit: 1 });
+    expect(items.map((event) => event.name)).toEqual(['BEFORE']);
+    expect(latestSeq).toBe(1);
+
+    store.log({ channel: 'c', name: 'AFTER_1' });
+    store.log({ channel: 'c', name: 'AFTER_2' });
+
+    expect(handlers.listEvents({ afterSeq: latestSeq, order: 'asc' }).items.map((event) => event.name)).toEqual([
+      'AFTER_1',
+      'AFTER_2',
+    ]);
+    expect(handlers.listEvents({}).latestSeq).toBe(3);
+  });
+
+  it('filters by exact name', () => {
+    const { store, handlers } = setup();
+    store.log({ channel: 'payments', name: 'PAYMENT_FAILED' });
+    store.log({ channel: 'payments', name: 'PAYMENT_FAILED_RETRY' });
+    store.log({ channel: 'payments', name: 'PAYMENT_SUCCEEDED' });
+
+    expect(handlers.listEvents({ name: 'PAYMENT_FAILED' }).items.map((event) => event.name)).toEqual([
+      'PAYMENT_FAILED',
+    ]);
+    expect(
+      handlers.listEvents({ name: ['PAYMENT_FAILED', 'PAYMENT_SUCCEEDED'], order: 'asc' }).items.map((e) => e.name),
+    ).toEqual(['PAYMENT_FAILED', 'PAYMENT_SUCCEEDED']);
+  });
 });
+
+describe('wait-for-event', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves with the first matching event logged after the call, ignoring older and non-matching ones', async () => {
+    const { store, handlers } = setup();
+    store.log({ channel: 'payments', name: 'PAYMENT_FAILED', preview: 'old' });
+
+    const waiting = handlers.waitForEvent({ channel: 'payments', name: 'PAYMENT_FAILED' });
+    store.log({ channel: 'analytics', name: 'PAYMENT_FAILED' });
+    store.log({ channel: 'payments', name: 'PAYMENT_FAILED', preview: 'new', payload: { code: 'card_declined' } });
+
+    const result = await waiting;
+    expect(result.timedOut).toBe(false);
+    expect(result.event).toMatchObject({ preview: 'new', payload: { code: 'card_declined' } });
+    expect(result.latestSeq).toBe(3);
+  });
+
+  it('returns an already-logged match right away when given afterSeq', async () => {
+    const { store, handlers } = setup();
+    store.log({ channel: 'c', name: 'A' });
+    store.log({ channel: 'c', name: 'B', payload: { n: 2 } });
+
+    const result = await handlers.waitForEvent({ afterSeq: 1, name: 'B' });
+
+    expect(result).toMatchObject({ timedOut: false, event: { name: 'B', payload: { n: 2 } } });
+  });
+
+  it('times out with a null event and stops listening', async () => {
+    vi.useFakeTimers();
+    const { store, handlers } = setup();
+    const unsubscribe = vi.fn();
+    const onLogged = vi.spyOn(store, 'onLogged').mockImplementation(() => unsubscribe);
+
+    const waiting = handlers.waitForEvent({ name: 'NEVER', timeoutMs: 5000 });
+    await vi.advanceTimersByTimeAsync(4999);
+    let settled = false;
+    void waiting.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await waiting).toEqual({ event: null, timedOut: true, latestSeq: 0 });
+    expect(onLogged).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the wait below the bridge call timeout', async () => {
+    vi.useFakeTimers();
+    const { handlers } = setup();
+
+    const waiting = handlers.waitForEvent({ name: 'NEVER', timeoutMs: 120_000 });
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    expect(await waiting).toMatchObject({ timedOut: true });
+  });
+
+  it('stops serializing eagerly once the wait is over', async () => {
+    const serialize = vi.fn(serializeToJson);
+    const store = createTimelineStore({ serialize });
+    const handlers = createTimelineAgentHandlers(() => store);
+
+    const waiting = handlers.waitForEvent({ name: 'HIT' });
+    store.log({ channel: 'c', name: 'HIT', payload: { n: 1 } });
+    await waiting;
+    expect(serialize).toHaveBeenCalledTimes(1);
+
+    // No listener left and no panel attached: back to a plain buffer push.
+    store.log({ channel: 'c', name: 'LATER', payload: { big: true } });
+    expect(serialize).toHaveBeenCalledTimes(1);
+  });
+});
+

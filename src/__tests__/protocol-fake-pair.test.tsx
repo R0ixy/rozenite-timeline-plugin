@@ -172,6 +172,7 @@ describe('timeline protocol (device hook <-> panel client)', () => {
       `${TIMELINE_PLUGIN_ID}.get-event`,
       `${TIMELINE_PLUGIN_ID}.list-channels`,
       `${TIMELINE_PLUGIN_ID}.list-events`,
+      `${TIMELINE_PLUGIN_ID}.wait-for-event`,
     ]);
     expect(await tools.get(`${TIMELINE_PLUGIN_ID}.list-channels`)!.handler({})).toMatchObject({
       totalEvents: 1,

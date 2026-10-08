@@ -3,10 +3,17 @@ import type { ChannelSummary } from './filters';
 import type { TimelineEventWithPayload } from './payload';
 import { TIMELINE_LEVELS, type TimelineLevel } from './types';
 
-export type TimelineListEventsArgs = {
+/** Filters shared by `list-events` and `wait-for-event`. */
+export type TimelineEventFilterArgs = {
   channel?: string | string[];
+  name?: string | string[];
   level?: TimelineLevel | TimelineLevel[];
   search?: string;
+  /** Only events logged after this sequence number (exclusive). */
+  afterSeq?: number;
+};
+
+export type TimelineListEventsArgs = TimelineEventFilterArgs & {
   /** ms since the epoch; only events at or after this time. */
   since?: number;
   limit?: number;
@@ -18,6 +25,20 @@ export type TimelineListEventsArgs = {
 export type TimelineListEventsResult = {
   items: TimelineEventWithPayload[];
   page: PageEnvelope;
+  /** Seq of the most recent event logged; pass it as `afterSeq` later to see only what came after. */
+  latestSeq: number;
+};
+
+export type TimelineWaitForEventArgs = TimelineEventFilterArgs & {
+  /** @default 10000, at most 25000 */
+  timeoutMs?: number;
+};
+
+export type TimelineWaitForEventResult = {
+  /** The first matching event, or null when the wait timed out. */
+  event: TimelineEventWithPayload | null;
+  timedOut: boolean;
+  latestSeq: number;
 };
 
 export type TimelineGetEventArgs = { id: string };
@@ -37,27 +58,38 @@ const stringOrStringArray = (description: string, items: Record<string, unknown>
   ],
 });
 
+const filterProperties = {
+  channel: stringOrStringArray('Only events on this channel (or any of these channels).'),
+  name: stringOrStringArray('Only events with exactly this name (or any of these names), e.g. "EVENT" or "PAYMENT_FAILED".'),
+  level: stringOrStringArray('Only events at this level (or any of these levels).', {
+    enum: [...TIMELINE_LEVELS],
+  }),
+  search: {
+    type: 'string',
+    description: 'Case-insensitive substring matched against name, preview, channel, tags and payload JSON.',
+  },
+  afterSeq: {
+    type: 'number',
+    description:
+      'Only events logged after this sequence number (exclusive). Use the `latestSeq` returned by an earlier call to see only what happened since then. Prefer it over `since`: it does not depend on the device clock.',
+  },
+} as const;
+
 export const timelineToolDefinitions = {
   listEvents: {
     name: 'list-events',
     description:
-      'List events from the app timeline (analytics calls, feature-flag evaluations, auth transitions and other domain logs the app records with `timeline.log`). Newest first by default. Payloads are omitted unless requested through fields; use get-event for a single full event.',
+      'List events from the app timeline: analytics calls, feature-flag evaluations, auth transitions, payments and other domain events the app records with `timeline.log`. Newest first by default; payloads are omitted unless the `payload` field is requested (or use get-event for one full event). Every result includes `latestSeq`. To check what an action in the app produced: call list-events with limit 1 and note `latestSeq`, trigger the action, then call list-events with `afterSeq` set to that value (or use wait-for-event).',
     readOnly: true,
     idempotent: true,
     inputSchema: {
       type: 'object',
       properties: {
-        channel: stringOrStringArray('Only events on this channel (or any of these channels).'),
-        level: stringOrStringArray('Only events at this level (or any of these levels).', {
-          enum: [...TIMELINE_LEVELS],
-        }),
-        search: {
-          type: 'string',
-          description: 'Case-insensitive substring matched against name, preview, tags and payload.',
-        },
+        ...filterProperties,
         since: {
           type: 'number',
-          description: 'Only events with timestamp >= since (milliseconds since the Unix epoch).',
+          description:
+            'Only events with timestamp >= since (milliseconds since the Unix epoch, by the device clock). Prefer `afterSeq`.',
         },
         limit: {
           type: 'number',
@@ -88,13 +120,30 @@ export const timelineToolDefinitions = {
         'tags',
         'truncated',
         'payload',
-      ],
-      defaultFields: ['id', 'timestamp', 'channel', 'name', 'preview', 'level', 'important'],
+      ] as const,
+      defaultFields: ['id', 'seq', 'timestamp', 'channel', 'name', 'preview', 'level', 'important'] as const,
+    },
+  },
+  waitForEvent: {
+    name: 'wait-for-event',
+    description:
+      'Wait until the app logs an event matching the filters, then return it with its payload. Use it to verify that an action in the app (a tap, a navigation, a request) produced the expected event, without polling. Without `afterSeq` it waits only for events logged after the call starts; with `afterSeq` it first returns an already-logged match after that seq. Returns `timedOut: true` and a null event if nothing matched within `timeoutMs`.',
+    readOnly: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...filterProperties,
+        timeoutMs: {
+          type: 'number',
+          description: 'How long to wait, in milliseconds. Defaults to 10000, at most 25000.',
+        },
+      },
     },
   },
   getEvent: {
     name: 'get-event',
-    description: 'Read one timeline event by id, including its serialized payload.',
+    description:
+      'Read one timeline event by id (from list-events or wait-for-event), including its full payload as JSON.',
     readOnly: true,
     idempotent: true,
     inputSchema: {

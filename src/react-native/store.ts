@@ -121,6 +121,8 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
   let live = false;
   /** Identifies the replay in progress; a new attach or a detach cancels it. */
   let replayToken: object | null = null;
+  /** Observers of new events (an agent waiting for one); usually empty. */
+  const listeners = new Set<(event: TimelineEvent) => void>();
 
   const sessionKey = () => `${sessionPrefix}:${generation}`;
 
@@ -187,6 +189,17 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
       serialized: false,
     };
     buffer.push(entry);
+
+    if (listeners.size > 0) {
+      const logged = materialize(entry);
+      listeners.forEach((listener) => {
+        try {
+          listener(logged);
+        } catch (error) {
+          reportInternalError(error);
+        }
+      });
+    }
 
     if (live && sink !== null) {
       const target = sink;
@@ -289,6 +302,22 @@ export const createTimelineStore = (options: TimelineStoreOptions = {}) => {
     },
 
     detach,
+
+    /**
+     * Calls `listener` with every event logged from now on, serialized.
+     * Costs nothing while no one is listening. Returns an unsubscribe.
+     */
+    onLogged: (listener: (event: TimelineEvent) => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+
+    /** Seq of the most recent event ever logged (0 if none), even if evicted or cleared. */
+    get latestSeq() {
+      return seq;
+    },
 
     get isAttached() {
       return sink !== null;
